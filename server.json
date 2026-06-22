@@ -1,0 +1,6 @@
+{
+  "name": "mcp-hubspot",
+  "description": "Browser-mediated HubSpot MCP server for Contacts and Companies.",
+  "command": "node",
+  "args": ["dist/server/index.js"]
+}

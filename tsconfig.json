@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noUncheckedIndexedAccess": true,
+    "types": ["node", "chrome"],
+    "outDir": "dist"
+  },
+  "include": ["server/**/*.ts", "shared/**/*.ts", "extension/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}

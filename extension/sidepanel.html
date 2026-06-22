@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>HubSpot MCP Panel</title>
+  </head>
+  <body>
+    <main class="panel">
+      <header>
+        <h1>HubSpot MCP</h1>
+        <button id="refresh">Refresh</button>
+      </header>
+      <section id="status">Checking status...</section>
+      <section class="autopilot">
+        <label>
+          <input id="autopilot" type="checkbox" />
+          Autopilot
+        </label>
+        <p>When enabled, pending writes run without per-operation approval.</p>
+      </section>
+      <section id="operations"></section>
+    </main>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

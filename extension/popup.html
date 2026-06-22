@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>HubSpot Browser MCP</title>
+  </head>
+  <body class="popup">
+    <main>
+      <h1>HubSpot MCP</h1>
+      <p id="status">Checking bridge...</p>
+      <section id="pair-section">
+        <label>
+          Pairing key
+          <input id="pairing-key" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="actions">
+          <button id="pair">Pair</button>
+        </div>
+      </section>
+      <div class="actions">
+        <button id="open-panel">Panel</button>
+      </div>
+      <p id="message"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
