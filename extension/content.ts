@@ -480,9 +480,14 @@ const clickSave = async () => {
   return true;
 };
 
+const isCreateEmbedSnapshot = (snapshot: PageSnapshot) => /\/object-builder\/[^/]+\/[^/]+\/embed/i.test(snapshot.url);
+
+const isRecordSnapshot = (snapshot: PageSnapshot) =>
+  Boolean(snapshot.recordId && snapshot.recordType && /\/(?:record|objects)\/[^/]+\/(?!views(?:\/|$))[^/?#]+/i.test(snapshot.url));
+
 const executeUpdate = async (
   operation: Operation,
-  options: { save: boolean } = { save: true },
+  options: { requireRecordAfterSave?: boolean; save: boolean } = { save: true },
 ): Promise<
   | { error: string; ok: false }
   | { error: string; ok: true; status: 'paused' }
@@ -513,9 +518,20 @@ const executeUpdate = async (
     };
   }
 
+  const snapshot = captureSnapshot();
+  if (options.requireRecordAfterSave && !isRecordSnapshot(snapshot)) {
+    return {
+      error: isCreateEmbedSnapshot(snapshot)
+        ? 'HubSpot kept the create form open after save. No final record URL was observed, so creation is not confirmed.'
+        : 'No final HubSpot record URL was observed after save, so creation is not confirmed.',
+      ok: true as const,
+      status: 'paused' as const,
+    };
+  }
+
   return {
     ok: true as const,
-    result: captureSnapshot(),
+    result: snapshot,
     status: 'succeeded' as const,
   };
 };
@@ -558,7 +574,7 @@ const executeCreate = async (operation: Operation) => {
     await wait(1600);
   }
 
-  return executeUpdate(operation);
+  return executeUpdate(operation, { requireRecordAfterSave: true, save: true });
 };
 
 const activityPatterns: Record<ActivityType, RegExp[]> = {
