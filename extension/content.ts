@@ -281,7 +281,8 @@ const collectResults = ({
   for (const anchor of anchors) {
     const href = anchor.href;
     const label = visibleText(anchor);
-    const haystack = `${label} ${href}`.toLowerCase();
+    const rowText = visibleText(anchor.closest('tr, [role="row"], li, [data-test-id*="row"], [data-testid*="row"], div'));
+    const haystack = `${label} ${href} ${rowText}`.toLowerCase();
     const isTargetObject =
       (resolvedObjectId && href.includes(resolvedObjectId)) ||
       labels.some((part) => part && href.toLowerCase().includes(part.toLowerCase())) ||
@@ -292,7 +293,7 @@ const collectResults = ({
 
     seen.add(href);
     results.push({
-      description: visibleText(anchor.closest('tr, [role="row"], li, div')),
+      description: rowText,
       displayName: label,
       id: detectRecordId(href),
       objectId: detectObjectId(href) || resolvedObjectId,
@@ -306,15 +307,28 @@ const collectResults = ({
   return results;
 };
 
-const findButton = (patterns: RegExp[]) =>
-  [...document.querySelectorAll<HTMLButtonElement>('button, [role="button"], input[type="button"], input[type="submit"]')]
+const controlText = (control: Element) =>
+  text(visibleText(control) || control.getAttribute('value') || control.getAttribute('aria-label') || control.getAttribute('title') || '');
+
+const isDisabledControl = (control: Element) =>
+  control.hasAttribute('disabled') || control.getAttribute('aria-disabled') === 'true' || control.getAttribute('data-disabled') === 'true';
+
+const findButton = (patterns: RegExp[], options: { exclude?: RegExp[] } = {}) =>
+  [...document.querySelectorAll<HTMLElement>('button, [role="button"], input[type="button"], input[type="submit"]')]
     .filter(isVisible)
-    .find((button) => patterns.some((pattern) => pattern.test(visibleText(button) || button.getAttribute('value') || '')));
+    .filter((button) => !isDisabledControl(button))
+    .find((button) => {
+      const label = controlText(button);
+      if (!label) return false;
+      if (options.exclude?.some((pattern) => pattern.test(label))) return false;
+      return patterns.some((pattern) => pattern.test(label));
+    });
 
 const findMenuButton = (patterns: RegExp[]) => {
-  const candidates = [...document.querySelectorAll<HTMLButtonElement>('button, [role="button"]')]
+  const candidates = [...document.querySelectorAll<HTMLElement>('button, [role="button"]')]
     .filter(isVisible)
-    .filter((button) => patterns.some((pattern) => pattern.test(visibleText(button))));
+    .filter((button) => !isDisabledControl(button))
+    .filter((button) => patterns.some((pattern) => pattern.test(controlText(button))));
 
   return (
     candidates.find((button) => button.closest('ul, ol, [role="menu"], [role="list"], [data-test-id*="dropdown"]')) ||
@@ -472,11 +486,28 @@ const fillFields = async (fields: FieldPatch[]) => {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const clickSave = async () => {
-  const saveButton = findButton([/^save$/i, /create/i, /salvar/i, /criar/i, /done/i, /log/i, /registrar/i, /concluir/i]);
+type SubmitMode = 'activity' | 'create' | 'generic';
+
+const clickSave = async (mode: SubmitMode = 'generic') => {
+  const createExclusions = [
+    /^adicionar/i,
+    /^add\b/i,
+    /^criar novo$/i,
+    /^create new$/i,
+    /^import/i,
+    /^importar/i,
+    /dropdown/i,
+  ];
+  const patterns =
+    mode === 'create'
+      ? [/^create$/i, /^create and/i, /^criar$/i, /^criar e/i, /^salvar$/i, /^save$/i]
+      : mode === 'activity'
+        ? [/^save$/i, /salvar/i, /^done$/i, /log/i, /registrar/i, /concluir/i]
+        : [/^save$/i, /^salvar$/i, /^update$/i, /^atualizar$/i, /^done$/i, /^concluir$/i, /^apply$/i, /^aplicar$/i];
+  const saveButton = findButton(patterns, { exclude: mode === 'create' ? createExclusions : undefined });
   if (!saveButton) return false;
   saveButton.click();
-  await wait(1200);
+  await wait(mode === 'create' ? 3500 : 1400);
   return true;
 };
 
@@ -487,7 +518,7 @@ const isRecordSnapshot = (snapshot: PageSnapshot) =>
 
 const executeUpdate = async (
   operation: Operation,
-  options: { requireRecordAfterSave?: boolean; save: boolean } = { save: true },
+  options: { requireRecordAfterSave?: boolean; save: boolean; submitMode?: SubmitMode } = { save: true },
 ): Promise<
   | { error: string; ok: false }
   | { error: string; ok: true; status: 'paused' }
@@ -509,7 +540,7 @@ const executeUpdate = async (
     };
   }
 
-  const saved = await clickSave();
+  const saved = await clickSave(options.submitMode);
   if (!saved) {
     return {
       error: 'Fields were filled, but no visible save/create button was found. User action is required.',
@@ -574,7 +605,7 @@ const executeCreate = async (operation: Operation) => {
     await wait(1600);
   }
 
-  return executeUpdate(operation, { requireRecordAfterSave: true, save: true });
+  return executeUpdate(operation, { requireRecordAfterSave: true, save: true, submitMode: 'create' });
 };
 
 const activityPatterns: Record<ActivityType, RegExp[]> = {
@@ -610,7 +641,7 @@ const executeActivityCreate = async (operation: Operation) => {
     };
   }
 
-  const saved = await clickSave();
+  const saved = await clickSave('activity');
   if (!saved) {
     return {
       error: 'Activity fields were filled, but no visible save/log button was found. User action is required.',

@@ -1,5 +1,5 @@
 import { bridgeOrigin, hubspotObjectIds } from '../shared/constants.js';
-import type { BrowserTask, Operation, RecordType, SearchRecordsInput } from '../shared/schemas.js';
+import type { BrowserTask, Operation, RecordType, SearchRecordsInput, SearchResult } from '../shared/schemas.js';
 import type { ContentCommand, ContentResponse, ExtensionStatus, RuntimeMessage, TaskEnvelope } from './types.js';
 
 const STORAGE_KEY = 'hubspot-mcp-pairing-key';
@@ -351,6 +351,89 @@ const executeOneOperation = async (operation: Operation) => {
   return response;
 };
 
+const getFieldValue = (operation: Operation, names: string[]) => {
+  const wanted = new Set(names.map((name) => name.toLowerCase()));
+  const field = (operation.fields || []).find((item) => {
+    const name = item.name.toLowerCase();
+    const label = (item.label || '').toLowerCase();
+    return wanted.has(name) || Boolean(item.label && wanted.has(label));
+  });
+  return field?.value.trim() || '';
+};
+
+const getCreateVerificationQuery = (operation: Operation) => {
+  const email = getFieldValue(operation, ['email', 'e-mail']);
+  if (email) return email;
+
+  if (operation.type === 'company') {
+    return getFieldValue(operation, ['name', 'company name', 'nome da empresa', 'empresa']);
+  }
+
+  const fullName = [getFieldValue(operation, ['firstname', 'first name', 'nome']), getFieldValue(operation, ['lastname', 'last name', 'sobrenome'])]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  if (fullName) return fullName;
+
+  return getFieldValue(operation, ['name', 'nome']);
+};
+
+const chooseVerifiedCreateResult = (results: SearchResult[], operation: Operation) => {
+  if (results.length === 0) return null;
+
+  const expectedEmail = getFieldValue(operation, ['email', 'e-mail']).toLowerCase();
+  const expectedName = getCreateVerificationQuery(operation).toLowerCase();
+  const byNeedle = (needle: string) =>
+    needle
+      ? results.find((result) => `${result.displayName} ${result.description || ''} ${result.url || ''}`.toLowerCase().includes(needle))
+      : undefined;
+
+  return byNeedle(expectedEmail) || byNeedle(expectedName) || results.find((result) => result.url) || null;
+};
+
+const verifyCreatedRecord = async (operation: Operation) => {
+  const query = getCreateVerificationQuery(operation);
+  if (!query) return null;
+
+  const tab = await getHubSpotTab();
+  if (!tab?.id) return null;
+
+  const input: SearchRecordsInput = {
+    limit: 5,
+    objectId: operation.objectId,
+    objectLabel: operation.objectLabel,
+    query,
+    type: operation.type,
+  };
+  const listUrl = buildListUrl(tab.url, input);
+  if (listUrl) await navigateAndWait(tab.id, listUrl);
+  const results = (await collectResults(tab.id, input)) as SearchResult[];
+  return chooseVerifiedCreateResult(results, operation);
+};
+
+const ensureCreateIsVerified = async (
+  operation: Operation,
+  response: Extract<ContentResponse, { status: 'paused' | 'succeeded' }>,
+) => {
+  if (operation.kind !== 'create') return response;
+  if (response.status === 'succeeded') return response;
+  const pauseReason = ((response as { error?: string }).error || '').toLowerCase();
+  if (pauseReason && !/final .*record url|create form open|creation is not confirmed/.test(pauseReason)) return response;
+
+  const record = await verifyCreatedRecord(operation);
+  if (!record?.url) return response;
+
+  return {
+    ok: true as const,
+    result: {
+      contentResult: response.result,
+      record,
+      verifiedBy: 'post-create-search',
+    },
+    status: 'succeeded' as const,
+  };
+};
+
 const executeApprovedOperation = async (operation: Operation) => {
   await bridgeFetch(`/operations/${operation.id}/running`, { method: 'POST' });
 
@@ -380,7 +463,7 @@ const executeApprovedOperation = async (operation: Operation) => {
         };
 
         try {
-          const result = await executeOneOperation(itemOperation);
+          const result = await ensureCreateIsVerified(itemOperation, await executeOneOperation(itemOperation));
           itemResults.push({ status: result.status === 'succeeded' ? 'succeeded' : 'paused' });
         } catch (error) {
           itemResults.push({
@@ -401,7 +484,7 @@ const executeApprovedOperation = async (operation: Operation) => {
     }
 
     if (operation.kind !== 'batch-update') {
-      const result = await executeOneOperation(operation);
+      const result = await ensureCreateIsVerified(operation, await executeOneOperation(operation));
       await bridgeFetch(`/operations/${operation.id}/result`, {
         body: JSON.stringify({
           result: result.result,
