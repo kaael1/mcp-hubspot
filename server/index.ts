@@ -7,6 +7,7 @@ import { createBridgeServer, getDoctorPayload, listen } from './bridge.js';
 import { getPackageRoot } from './runtime-paths.js';
 import { loadRuntimeState } from './state.js';
 import { createMcpApp } from './tools.js';
+import { packageVersion } from '../shared/constants.js';
 
 const bridgeServer = createBridgeServer();
 
@@ -34,7 +35,7 @@ const handleCli = async () => {
   }
 
   if (command === 'version' || command === '--version' || command === '-v') {
-    console.log('0.1.0');
+    console.log(packageVersion);
     return true;
   }
 

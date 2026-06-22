@@ -25,10 +25,10 @@ const sendMessage = <T>(message: unknown) =>
 const refresh = async () => {
   const status = await sendMessage<ExtensionStatus>({ type: 'get-status' });
   statusEl.textContent = status.paired
-    ? `Paired. Pending operations: ${status.pendingOperations.length}`
+    ? `v${status.version}. Paired. Pending operations: ${status.pendingOperations.length}`
     : status.bridgeOk
-      ? 'Bridge found. Paste the pairing key from `doctor`.'
-      : `Bridge offline: ${status.error || 'not reachable'}`;
+      ? `v${status.version}. Bridge found. Paste the pairing key from \`doctor\`.`
+      : `v${status.version}. Bridge offline: ${status.error || 'not reachable'}`;
 
   pairSection.hidden = status.paired;
   messageEl.textContent = status.paired ? 'Already paired with this local bridge.' : messageEl.textContent;

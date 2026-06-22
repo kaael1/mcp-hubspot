@@ -36,7 +36,7 @@ import {
   searchResultSchema,
   setAutopilotInputSchema,
 } from '../shared/schemas.js';
-import { packageName } from '../shared/constants.js';
+import { packageName, packageVersion } from '../shared/constants.js';
 import { coverageMatrix } from '../shared/coverage.js';
 
 const emptyInputSchema = z.object({});
@@ -404,7 +404,7 @@ const tools: ToolDefinition[] = [
 export const createMcpApp = () => {
   const server = new McpServer({
     name: packageName,
-    version: '0.1.0',
+    version: packageVersion,
   });
 
   server.registerResource(

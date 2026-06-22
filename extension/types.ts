@@ -8,6 +8,7 @@ export type ExtensionStatus = {
   lastSnapshot?: PageSnapshot | null;
   paired: boolean;
   pendingOperations: Operation[];
+  version: string;
 };
 
 export type ContentCommand =

@@ -63,10 +63,10 @@ const escapeHtml = (value: string) =>
 
 const render = (status: ExtensionStatus) => {
   statusEl.textContent = status.paired
-    ? `Paired. ${status.pendingOperations.length} pending/running operation(s).`
+    ? `v${status.version}. Paired. ${status.pendingOperations.length} pending/running operation(s).`
     : status.bridgeOk
-      ? 'Bridge found, but this extension is not paired yet.'
-      : `Bridge offline: ${status.error || 'not reachable'}`;
+      ? `v${status.version}. Bridge found, but this extension is not paired yet.`
+      : `v${status.version}. Bridge offline: ${status.error || 'not reachable'}`;
   autopilotInput.checked = status.autopilotEnabled;
 
   operationsEl.innerHTML =

@@ -88,9 +88,26 @@ const ensureContentScript = async (tabId: number) => {
   }
 };
 
+const getContentTimeoutMs = (message: ContentCommand) => {
+  if (message.type === 'execute_operation') return 25_000;
+  if (message.type === 'capture_snapshot') return 10_000;
+  return 8_000;
+};
+
 const sendContentToFrame = async <T extends ContentResponse>(tabId: number, frameId: number, message: ContentCommand) =>
   new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timeout = globalThis.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`HubSpot frame ${frameId} did not respond to ${message.type}.`));
+    }, getContentTimeoutMs(message));
+
     chrome.tabs.sendMessage(tabId, message, { frameId }, (response: T | undefined) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeout);
+
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
         return;
@@ -153,17 +170,19 @@ const sendContent = async <T extends ContentResponse>(tabId: number, message: Co
 const sendContentAllFrames = async <T extends ContentResponse>(tabId: number, message: ContentCommand) => {
   await ensureContentScript(tabId);
   const frameIds = await getFrameIds(tabId);
-  const responses: T[] = [];
 
-  for (const frameId of frameIds) {
-    try {
-      responses.push(await sendContentToFrame<T>(tabId, frameId, message));
-    } catch {
-      // Some iframes are transient or not HubSpot app frames.
-    }
-  }
+  const responses: Array<T | null> = await Promise.all(
+    frameIds.map(async (frameId): Promise<T | null> => {
+      try {
+        return await sendContentToFrame<T>(tabId, frameId, message);
+      } catch {
+        // Some iframes are transient, cross-origin wrappers, or too heavy to snapshot.
+        return null;
+      }
+    }),
+  );
 
-  return responses;
+  return responses.filter((response): response is T => response !== null);
 };
 
 const detectPortalId = (url: string | undefined) => {
@@ -545,6 +564,7 @@ const pair = async (key: string) => {
 
 const getStatus = async (): Promise<ExtensionStatus> => {
   const key = await getPairingKey();
+  const version = chrome.runtime.getManifest().version;
   try {
     const health = await fetch(`${bridgeOrigin}/health`);
     const body = (await health.json()) as {
@@ -562,6 +582,7 @@ const getStatus = async (): Promise<ExtensionStatus> => {
       lastSnapshot: (body.context?.latestSnapshot as ExtensionStatus['lastSnapshot']) || null,
       paired: Boolean(body.paired),
       pendingOperations: body.context?.pendingOperations || [],
+      version,
     };
   } catch (error) {
     return {
@@ -571,6 +592,7 @@ const getStatus = async (): Promise<ExtensionStatus> => {
       hasKey: Boolean(key),
       paired: false,
       pendingOperations: [],
+      version,
     };
   }
 };

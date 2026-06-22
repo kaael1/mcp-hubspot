@@ -331,7 +331,7 @@ export const createBridgeServer = () =>
       }
 
       requireAuth(request);
-      await touchExtension();
+      if (isTrustedPairedExtension(request)) await touchExtension();
 
       if (request.method === 'GET' && pathname === '/context') {
         sendJson(request, response, 200, { context: getContext(), ok: true });

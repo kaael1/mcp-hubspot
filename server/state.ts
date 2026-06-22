@@ -58,6 +58,7 @@ const emptyState = (): AppState => ({
 let pairingState: PairingState | null = null;
 let appState: AppState = emptyState();
 const taskWaiters = new Map<string, Array<(task: BrowserTask) => void>>();
+const taskLeaseMs = 60_000;
 
 const now = () => new Date().toISOString();
 const pairingPath = () => getDataFilePath('pairing.json');
@@ -188,6 +189,7 @@ export const getContext = () => ({
 });
 
 export const createBrowserTask = async (type: BrowserTask['type'], input: unknown) => {
+  await failStaleRunningTasks();
   const task: BrowserTask = {
     createdAt: now(),
     id: randomUUID(),
@@ -203,7 +205,35 @@ export const createBrowserTask = async (type: BrowserTask['type'], input: unknow
 
 export const getBrowserTask = (id: string) => appState.tasks[id] || null;
 
+const failStaleRunningTasks = async () => {
+  const cutoff = Date.now() - taskLeaseMs;
+  const staleTasks = Object.values(appState.tasks).filter((task) => {
+    if (task.status !== 'running') return false;
+    const updatedAt = Date.parse(task.updatedAt || task.startedAt || task.createdAt);
+    return Number.isFinite(updatedAt) && updatedAt < cutoff;
+  });
+
+  for (const task of staleTasks) {
+    const failed: BrowserTask = {
+      ...task,
+      completedAt: now(),
+      error: 'Browser task timed out while waiting for the extension to return a result.',
+      status: 'failed',
+      updatedAt: now(),
+    };
+    appState.tasks[task.id] = failed;
+    wakeTaskWaiters(failed);
+    await appendAudit({
+      detail: failed.error,
+      operationId: task.id,
+      summary: `Browser task ${task.type} failed.`,
+      type: 'task',
+    });
+  }
+};
+
 export const claimNextTask = async () => {
+  await failStaleRunningTasks();
   const task = Object.values(appState.tasks)
     .filter((candidate) => candidate.status === 'pending')
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
