@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">mcp-hubspot logo</title>
+  <desc id="desc">A simple local bridge mark for the HubSpot browser MCP extension.</desc>
+  <rect width="128" height="128" rx="28" fill="#0f172a"/>
+  <path d="M35 77h30c13 0 24-11 24-24V34" fill="none" stroke="#38bdf8" stroke-width="10" stroke-linecap="round"/>
+  <path d="M39 52h22c7 0 13 6 13 13v29" fill="none" stroke="#ff5c35" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="34" cy="77" r="13" fill="#ffffff"/>
+  <circle cx="34" cy="77" r="7" fill="#ff5c35"/>
+  <circle cx="89" cy="34" r="13" fill="#ffffff"/>
+  <circle cx="89" cy="34" r="7" fill="#38bdf8"/>
+  <circle cx="74" cy="94" r="13" fill="#ffffff"/>
+  <circle cx="74" cy="94" r="7" fill="#ff5c35"/>
+  <path d="M47 39h-6v-8h-8v8h-8v6h8v8h8v-8h6z" fill="#ff5c35"/>
+</svg>

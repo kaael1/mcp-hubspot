@@ -38,4 +38,6 @@ for (const file of ['manifest.json', 'popup.html', 'sidepanel.html', 'styles.css
   await cp(join(root, 'extension', file), join(extensionDist, file));
 }
 
+await cp(join(root, 'extension', 'assets'), join(extensionDist, 'assets'), { recursive: true });
+
 console.log(`Built server and extension into ${dist}`);

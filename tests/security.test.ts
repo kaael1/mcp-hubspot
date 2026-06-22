@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +22,18 @@ describe('extension safety boundary', () => {
     expect(manifest.permissions || []).not.toContain('cookies');
     expect(manifest.permissions || []).not.toContain('webRequest');
     expect(manifest.permissions || []).not.toContain('webRequestBlocking');
+  });
+
+  it('declares existing PNG icons for Chrome extension surfaces', () => {
+    const manifest = JSON.parse(readFileSync(join(extensionRoot, 'manifest.json'), 'utf8')) as {
+      action?: { default_icon?: Record<string, string> };
+      icons?: Record<string, string>;
+    };
+
+    for (const iconPath of [...Object.values(manifest.icons || {}), ...Object.values(manifest.action?.default_icon || {})]) {
+      expect(iconPath.endsWith('.png')).toBe(true);
+      expect(existsSync(join(extensionRoot, iconPath))).toBe(true);
+    }
   });
 
   it('does not use browser-session extraction APIs in extension source', () => {

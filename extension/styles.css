@@ -18,7 +18,7 @@ main {
 
 h1 {
   font-size: 18px;
-  margin: 0 0 10px;
+  margin: 0;
 }
 
 h2 {
@@ -68,11 +68,28 @@ button:disabled {
   gap: 8px;
 }
 
+.brand {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  margin: 0 0 10px;
+}
+
+.brand img {
+  flex: 0 0 auto;
+  height: 28px;
+  width: 28px;
+}
+
 .panel header {
   align-items: center;
   display: flex;
   justify-content: space-between;
   margin-bottom: 12px;
+}
+
+.panel .brand {
+  margin: 0;
 }
 
 .autopilot {
