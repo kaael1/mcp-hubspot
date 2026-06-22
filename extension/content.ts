@@ -627,7 +627,14 @@ const createButtonPatterns = (operation: Operation) => {
   ];
 };
 
-const executeCreate = async (operation: Operation) => {
+const openCreateForm = async (operation: Operation) => {
+  if (isCreateEmbedSnapshot(captureSnapshot())) {
+    return {
+      ok: true as const,
+      status: 'succeeded' as const,
+    };
+  }
+
   let createButton =
     document.querySelector<HTMLElement>('[data-test-id="create-object-dropdown-create-object"], [data-testid="create-object-dropdown-create-object"]') ||
     findMenuButton([/^criar novo$/i, /^create new$/i]);
@@ -647,9 +654,34 @@ const executeCreate = async (operation: Operation) => {
       findMenuButton([/^criar novo$/i, /^create new$/i]);
   }
 
-  if (createButton) {
-    createButton.click();
-    await wait(1600);
+  if (!createButton) {
+    return {
+      error: 'No visible create button was found for this HubSpot object list.',
+      ok: true as const,
+      status: 'paused' as const,
+    };
+  }
+
+  createButton.click();
+  await wait(2200);
+
+  return {
+    ok: true as const,
+    status: 'succeeded' as const,
+  };
+};
+
+const executeCreate = async (operation: Operation, options: { formOnly?: boolean } = {}) => {
+  if (options.formOnly && !isCreateEmbedSnapshot(captureSnapshot())) {
+    return {
+      error: 'This frame is not the open HubSpot create form.',
+      ok: false as const,
+    };
+  }
+
+  if (!options.formOnly) {
+    const opened = await openCreateForm(operation);
+    if (opened.status !== 'succeeded') return opened;
   }
 
   return executeUpdate(operation, { requireRecordAfterSave: true, save: true, submitMode: 'create' });
@@ -756,9 +788,9 @@ const executeAssociationCreate = async (operation: Operation) => {
   };
 };
 
-const executeOperation = async (operation: Operation): Promise<ContentResponse> => {
+const executeOperation = async (operation: Operation, options: { formOnly?: boolean } = {}): Promise<ContentResponse> => {
   if (operation.kind === 'create') {
-    const result = await executeCreate(operation);
+    const result = await executeCreate(operation, options);
     return result.ok ? result : { error: result.error, ok: false };
   }
 
@@ -796,7 +828,8 @@ chrome.runtime.onMessage.addListener((message: ContentCommand, _sender, sendResp
   const run = async (): Promise<ContentResponse> => {
     if (message.type === 'capture_snapshot') return { ok: true, snapshot: captureSnapshot() };
     if (message.type === 'collect_results') return { ok: true, results: collectResults(message.input) };
-    if (message.type === 'execute_operation') return executeOperation(message.operation);
+    if (message.type === 'open_create_form') return openCreateForm(message.operation);
+    if (message.type === 'execute_operation') return executeOperation(message.operation, { formOnly: message.mode === 'form-only' });
     return { error: 'Unknown content command.', ok: false };
   };
 

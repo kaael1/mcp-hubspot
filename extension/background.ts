@@ -128,20 +128,32 @@ const sendContentToFrame = async <T extends ContentResponse>(tabId: number, fram
   });
 
 const getFrameIds = async (tabId: number) =>
-  new Promise<number[]>((resolve) => {
+  (await getFrameInfos(tabId)).map((frame) => frame.frameId);
+
+const getFrameInfos = async (tabId: number) =>
+  new Promise<Array<{ frameId: number; url?: string }>>((resolve) => {
     chrome.webNavigation.getAllFrames({ tabId }, (frames) => {
       if (chrome.runtime.lastError || !frames?.length) {
-        resolve([0]);
+        resolve([{ frameId: 0 }]);
         return;
       }
 
-      resolve([...new Set([0, ...frames.map((frame) => frame.frameId)])]);
+      const byId = new Map<number, { frameId: number; url?: string }>();
+      byId.set(0, { frameId: 0 });
+      for (const frame of frames) {
+        byId.set(frame.frameId, { frameId: frame.frameId, url: frame.url });
+      }
+      resolve([...byId.values()]);
     });
   });
 
-const sendContent = async <T extends ContentResponse>(tabId: number, message: ContentCommand) => {
+const sendContent = async <T extends ContentResponse>(tabId: number, message: ContentCommand, preferredFrameIds?: number[]) => {
   await ensureContentScript(tabId);
-  const frameIds = await getFrameIds(tabId);
+  const discoveredFrameIds = await getFrameIds(tabId);
+  const frameIds = [
+    ...(preferredFrameIds || []),
+    ...discoveredFrameIds.filter((frameId) => !(preferredFrameIds || []).includes(frameId)),
+  ];
   const seenFrames = new Set<number>();
   let lastError: Error | null = null;
 
@@ -354,12 +366,37 @@ const runAutopilotOnce = async () => {
   }
 };
 
+const getCreateFormFrameIds = async (tabId: number) => {
+  const frameInfos = await getFrameInfos(tabId);
+  return frameInfos
+    .sort((left, right) => {
+      const leftScore = /\/object-builder\/[^/]+\/[^/]+\/embed/i.test(left.url || '') ? 0 : 1;
+      const rightScore = /\/object-builder\/[^/]+\/[^/]+\/embed/i.test(right.url || '') ? 0 : 1;
+      return leftScore - rightScore;
+    })
+    .map((frame) => frame.frameId);
+};
+
 const executeOneOperation = async (operation: Operation) => {
   const tab = await getHubSpotTab();
   if (!tab?.id) throw new Error('Open a logged-in HubSpot tab before approving an operation.');
   if (operation.kind === 'create') {
     const listUrl = buildObjectListUrl(tab.url, operation.type, operation.objectId);
     if (listUrl) await navigateAndWait(tab.id, listUrl);
+    await sendContent<Extract<ContentResponse, { status: 'paused' | 'succeeded' }>>(tab.id, {
+      operation,
+      type: 'open_create_form',
+    });
+    await sleep(1800);
+    return sendContent<Extract<ContentResponse, { status: 'paused' | 'succeeded' }>>(
+      tab.id,
+      {
+        mode: 'form-only',
+        operation,
+        type: 'execute_operation',
+      },
+      await getCreateFormFrameIds(tab.id),
+    );
   }
   const targetUrl = operation.target?.url || operation.activity?.target?.url || operation.association?.from?.url;
   if (targetUrl) await navigateAndWait(tab.id, targetUrl);

@@ -14,7 +14,8 @@ export type ExtensionStatus = {
 export type ContentCommand =
   | { type: 'capture_snapshot' }
   | { input: SearchRecordsInput; type: 'collect_results' }
-  | { operation: Operation; type: 'execute_operation' };
+  | { operation: Operation; type: 'open_create_form' }
+  | { mode?: 'form-only'; operation: Operation; type: 'execute_operation' };
 
 export type ContentResponse =
   | { ok: true; snapshot: PageSnapshot }
