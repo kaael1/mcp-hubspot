@@ -1,4 +1,4 @@
-import type { BrowserTask, Operation, OperationStatus, PageSnapshot, RecordType, SearchResult } from '../shared/schemas.js';
+import type { BrowserTask, Operation, OperationStatus, PageSnapshot, SearchRecordsInput, SearchResult } from '../shared/schemas.js';
 
 export type ExtensionStatus = {
   autopilotEnabled: boolean;
@@ -12,7 +12,7 @@ export type ExtensionStatus = {
 
 export type ContentCommand =
   | { type: 'capture_snapshot' }
-  | { input: { limit?: number; query: string; type: RecordType }; type: 'collect_results' }
+  | { input: SearchRecordsInput; type: 'collect_results' }
   | { operation: Operation; type: 'execute_operation' };
 
 export type ContentResponse =

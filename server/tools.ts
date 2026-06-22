@@ -15,6 +15,7 @@ import {
   waitForTask,
 } from './state.js';
 import {
+  activityTypeSchema,
   browserTaskInputSchema,
   browserTaskTimeoutInputSchema,
   getAuditLogInputSchema,
@@ -22,8 +23,12 @@ import {
   openRecordInputSchema,
   pageSnapshotSchema,
   previewRecordUpdateInputSchema,
+  recordRefSchema,
+  recordTypeSchema,
+  requestAssociationCreateInputSchema,
   requestAssociatedContactsCreateInputSchema,
   requestBatchUpdateInputSchema,
+  requestTimelineActivityCreateInputSchema,
   requestRecordCreateInputSchema,
   requestRecordFillInputSchema,
   requestRecordUpdateInputSchema,
@@ -32,6 +37,7 @@ import {
   setAutopilotInputSchema,
 } from '../shared/schemas.js';
 import { packageName } from '../shared/constants.js';
+import { coverageMatrix } from '../shared/coverage.js';
 
 const emptyInputSchema = z.object({});
 
@@ -99,6 +105,13 @@ const tools: ToolDefinition[] = [
     name: 'get_context',
   },
   {
+    description: 'Return the honest support matrix: supported, experimental, and intentionally out-of-scope HubSpot areas.',
+    handler: () => ({ coverage: coverageMatrix, ok: true }),
+    inputSchema: emptyInputSchema,
+    inputShape: {},
+    name: 'get_coverage_matrix',
+  },
+  {
     description: 'Ask the paired extension to capture a sanitized snapshot of the active HubSpot page.',
     handler: async (input) => {
       const { timeoutMs = 5_000 } = browserTaskTimeoutInputSchema.parse(input);
@@ -118,7 +131,26 @@ const tools: ToolDefinition[] = [
     name: 'get_page_snapshot',
   },
   {
-    description: 'Search visible HubSpot contacts or companies through the browser UI.',
+    description: 'Capture the current page and return only visible HubSpot tables/lists.',
+    handler: async (input) => {
+      const { timeoutMs = 5_000 } = browserTaskTimeoutInputSchema.parse(input);
+      const result = await runBrowserTask('capture_snapshot', {}, timeoutMs);
+      if ((result as { taskId?: unknown }).taskId) {
+        const pending = result as { status: string; taskId: string };
+        return { ok: true, status: pending.status, taskId: pending.taskId };
+      }
+      const snapshot = pageSnapshotSchema.parse((result as { snapshot?: unknown })?.snapshot || result);
+      await saveSnapshot(snapshot);
+      return { ok: true, tables: snapshot.tables || [] };
+    },
+    inputSchema: browserTaskTimeoutInputSchema,
+    inputShape: {
+      timeoutMs: z.number().int().min(0).max(60_000).optional(),
+    },
+    name: 'get_visible_tables',
+  },
+  {
+    description: 'Search visible HubSpot contacts, companies, deals, tickets, or custom objects through the browser UI.',
     handler: async (input) => {
       const parsed = searchRecordsInputSchema.parse(input);
       const result = await runBrowserTask('search_records', parsed, parsed.timeoutMs ?? 5_000);
@@ -132,31 +164,28 @@ const tools: ToolDefinition[] = [
     inputSchema: searchRecordsInputSchema,
     inputShape: {
       limit: z.number().int().positive().max(25).optional(),
+      objectId: z.string().trim().min(1).optional(),
+      objectLabel: z.string().trim().min(1).optional(),
       query: z.string().trim().min(1),
       timeoutMs: z.number().int().min(0).max(60_000).optional(),
-      type: z.enum(['contact', 'company']),
+      type: recordTypeSchema,
     },
     name: 'search_records',
   },
   {
-    description: 'Open a HubSpot contact or company by URL, record reference, or search query.',
+    description: 'Open a HubSpot CRM record by URL, record reference, or search query.',
     handler: async (input) => {
       const parsed = openRecordInputSchema.parse(input);
       return { ok: true, result: await runBrowserTask('open_record', parsed, parsed.timeoutMs ?? 5_000) };
     },
     inputSchema: openRecordInputSchema,
     inputShape: {
+      objectId: z.string().trim().min(1).optional(),
+      objectLabel: z.string().trim().min(1).optional(),
       query: z.string().trim().min(1).optional(),
-      record: z
-        .object({
-          displayName: z.string().optional(),
-          id: z.string().optional(),
-          type: z.enum(['contact', 'company']),
-          url: z.string().url().optional(),
-        })
-        .optional(),
+      record: recordRefSchema.optional(),
       timeoutMs: z.number().int().min(0).max(60_000).optional(),
-      type: z.enum(['contact', 'company']).optional(),
+      type: recordTypeSchema.optional(),
       url: z.string().url().optional(),
     },
     name: 'open_record',
@@ -179,14 +208,7 @@ const tools: ToolDefinition[] = [
     inputSchema: previewRecordUpdateInputSchema,
     inputShape: {
       fields: z.array(z.object({ label: z.string().optional(), name: z.string(), value: z.string() })).min(1),
-      target: z
-        .object({
-          displayName: z.string().optional(),
-          id: z.string().optional(),
-          type: z.enum(['contact', 'company']),
-          url: z.string().url().optional(),
-        })
-        .optional(),
+      target: recordRefSchema.optional(),
     },
     name: 'preview_record_update',
   },
@@ -194,19 +216,19 @@ const tools: ToolDefinition[] = [
     description: 'Create a pending update operation; the extension side panel must approve before saving.',
     handler: (input) => {
       const parsed = requestRecordUpdateInputSchema.parse(input);
-      return createOperation({ fields: parsed.fields, kind: 'update', target: parsed.target, type: parsed.target?.type || 'contact' });
+      return createOperation({
+        fields: parsed.fields,
+        kind: 'update',
+        objectId: parsed.target?.objectId,
+        objectLabel: parsed.target?.objectLabel,
+        target: parsed.target,
+        type: parsed.target?.type || 'contact',
+      });
     },
     inputSchema: requestRecordUpdateInputSchema,
     inputShape: {
       fields: z.array(z.object({ label: z.string().optional(), name: z.string(), value: z.string() })).min(1),
-      target: z
-        .object({
-          displayName: z.string().optional(),
-          id: z.string().optional(),
-          type: z.enum(['contact', 'company']),
-          url: z.string().url().optional(),
-        })
-        .optional(),
+      target: recordRefSchema.optional(),
     },
     name: 'request_record_update',
   },
@@ -214,19 +236,19 @@ const tools: ToolDefinition[] = [
     description: 'Create a pending fill-only operation; it fills visible fields in HubSpot without clicking save.',
     handler: (input) => {
       const parsed = requestRecordFillInputSchema.parse(input);
-      return createOperation({ fields: parsed.fields, kind: 'fill-only', target: parsed.target, type: parsed.target?.type || 'contact' });
+      return createOperation({
+        fields: parsed.fields,
+        kind: 'fill-only',
+        objectId: parsed.target?.objectId,
+        objectLabel: parsed.target?.objectLabel,
+        target: parsed.target,
+        type: parsed.target?.type || 'contact',
+      });
     },
     inputSchema: requestRecordFillInputSchema,
     inputShape: {
       fields: z.array(z.object({ label: z.string().optional(), name: z.string(), value: z.string() })).min(1),
-      target: z
-        .object({
-          displayName: z.string().optional(),
-          id: z.string().optional(),
-          type: z.enum(['contact', 'company']),
-          url: z.string().url().optional(),
-        })
-        .optional(),
+      target: recordRefSchema.optional(),
     },
     name: 'request_record_fill',
   },
@@ -234,12 +256,20 @@ const tools: ToolDefinition[] = [
     description: 'Create a pending create operation; the extension side panel must approve before saving.',
     handler: (input) => {
       const parsed = requestRecordCreateInputSchema.parse(input);
-      return createOperation({ fields: parsed.fields, kind: 'create', type: parsed.type });
+      return createOperation({
+        fields: parsed.fields,
+        kind: 'create',
+        objectId: parsed.objectId,
+        objectLabel: parsed.objectLabel,
+        type: parsed.type,
+      });
     },
     inputSchema: requestRecordCreateInputSchema,
     inputShape: {
       fields: z.array(z.object({ label: z.string().optional(), name: z.string(), value: z.string() })).min(1),
-      type: z.enum(['contact', 'company']),
+      objectId: z.string().trim().min(1).optional(),
+      objectLabel: z.string().trim().min(1).optional(),
+      type: recordTypeSchema,
     },
     name: 'request_record_create',
   },
@@ -247,7 +277,7 @@ const tools: ToolDefinition[] = [
     description: 'Create a pending batch update of up to 25 records; every item runs after side panel approval.',
     handler: (input) => {
       const parsed = requestBatchUpdateInputSchema.parse(input);
-      return createOperation({ items: parsed.items, kind: 'batch-update', type: parsed.type });
+      return createOperation({ items: parsed.items, kind: 'batch-update', objectId: parsed.objectId, objectLabel: parsed.objectLabel, type: parsed.type });
     },
     inputSchema: requestBatchUpdateInputSchema,
     inputShape: {
@@ -258,16 +288,51 @@ const tools: ToolDefinition[] = [
             target: z.object({
               displayName: z.string().optional(),
               id: z.string().optional(),
-              type: z.enum(['contact', 'company']),
+              objectId: z.string().trim().min(1).optional(),
+              objectLabel: z.string().trim().min(1).optional(),
+              type: recordTypeSchema,
               url: z.string().url().optional(),
             }),
           }),
         )
         .min(1)
         .max(25),
-      type: z.enum(['contact', 'company']),
+      objectId: z.string().trim().min(1).optional(),
+      objectLabel: z.string().trim().min(1).optional(),
+      type: recordTypeSchema,
     },
     name: 'request_batch_update',
+  },
+  {
+    description: 'Create a pending note, task, call, meeting, or logged-email activity on the current/provided record.',
+    handler: (input) => {
+      const parsed = requestTimelineActivityCreateInputSchema.parse(input);
+      return createOperation({ activity: parsed, kind: 'create-activity', type: parsed.target?.type || 'contact' });
+    },
+    inputSchema: requestTimelineActivityCreateInputSchema,
+    inputShape: {
+      body: z.string().optional(),
+      dueDate: z.string().optional(),
+      fields: z.array(z.object({ label: z.string().optional(), name: z.string(), value: z.string() })).optional(),
+      target: recordRefSchema.optional(),
+      title: z.string().optional(),
+      type: activityTypeSchema,
+    },
+    name: 'request_timeline_activity_create',
+  },
+  {
+    description: 'Create a pending association between the current/provided record and another visible/searchable CRM record.',
+    handler: (input) => {
+      const parsed = requestAssociationCreateInputSchema.parse(input);
+      return createOperation({ association: parsed, kind: 'associate-record', type: parsed.from?.type || parsed.to.type });
+    },
+    inputSchema: requestAssociationCreateInputSchema,
+    inputShape: {
+      from: recordRefSchema.optional(),
+      label: z.string().trim().min(1).optional(),
+      to: recordRefSchema,
+    },
+    name: 'request_association_create',
   },
   {
     description: 'Create pending contacts and associate them to a provided/current company when the HubSpot form exposes that field.',
@@ -281,7 +346,9 @@ const tools: ToolDefinition[] = [
         .object({
           displayName: z.string().optional(),
           id: z.string().optional(),
-          type: z.enum(['company']),
+          objectId: z.string().trim().min(1).optional(),
+          objectLabel: z.string().trim().min(1).optional(),
+          type: z.literal('company'),
           url: z.string().url().optional(),
         })
         .optional(),

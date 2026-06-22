@@ -1,5 +1,5 @@
 import { bridgeOrigin, hubspotObjectIds } from '../shared/constants.js';
-import type { BrowserTask, Operation, RecordType } from '../shared/schemas.js';
+import type { BrowserTask, Operation, RecordType, SearchRecordsInput } from '../shared/schemas.js';
 import type { ContentCommand, ContentResponse, ExtensionStatus, RuntimeMessage, TaskEnvelope } from './types.js';
 
 const STORAGE_KEY = 'hubspot-mcp-pairing-key';
@@ -174,17 +174,22 @@ const detectPortalId = (url: string | undefined) => {
   return objectRoute?.[1] || null;
 };
 
-const buildListUrl = (baseUrl: string | undefined, type: RecordType, query: string) => {
+const getObjectId = (type: RecordType, objectId?: string) => (type === 'custom' ? objectId : hubspotObjectIds[type]);
+
+const buildListUrl = (baseUrl: string | undefined, input: Pick<SearchRecordsInput, 'objectId' | 'query' | 'type'>) => {
   const portalId = detectPortalId(baseUrl);
   if (!portalId) return null;
-  const objectId = hubspotObjectIds[type];
-  return `https://app.hubspot.com/contacts/${portalId}/objects/${objectId}/views/all/list?query=${encodeURIComponent(query)}`;
+  const objectId = getObjectId(input.type, input.objectId);
+  if (!objectId) return null;
+  return `https://app.hubspot.com/contacts/${portalId}/objects/${objectId}/views/all/list?query=${encodeURIComponent(input.query)}`;
 };
 
-const buildObjectListUrl = (baseUrl: string | undefined, type: RecordType) => {
+const buildObjectListUrl = (baseUrl: string | undefined, type: RecordType, objectId?: string) => {
   const portalId = detectPortalId(baseUrl);
   if (!portalId) return null;
-  return `https://app.hubspot.com/contacts/${portalId}/objects/${hubspotObjectIds[type]}/views/all/list`;
+  const resolvedObjectId = getObjectId(type, objectId);
+  if (!resolvedObjectId) return null;
+  return `https://app.hubspot.com/contacts/${portalId}/objects/${resolvedObjectId}/views/all/list`;
 };
 
 const navigateAndWait = async (tabId: number, url: string) => {
@@ -207,6 +212,7 @@ const captureSnapshot = async (tabId: number) => {
     associations: [...(primary.snapshot.associations || []), ...rest.flatMap((item) => item.snapshot.associations || [])],
     fields: [...primary.snapshot.fields, ...rest.flatMap((item) => item.snapshot.fields || [])],
     tables: [...(primary.snapshot.tables || []), ...rest.flatMap((item) => item.snapshot.tables || [])],
+    timeline: [...(primary.snapshot.timeline || []), ...rest.flatMap((item) => item.snapshot.timeline || [])],
   };
 
   await bridgeFetch('/snapshot', {
@@ -216,7 +222,7 @@ const captureSnapshot = async (tabId: number) => {
   return snapshot;
 };
 
-const collectResults = async (tabId: number, input: { limit?: number; query: string; type: RecordType }) => {
+const collectResults = async (tabId: number, input: SearchRecordsInput) => {
   const response = await sendContent<Extract<ContentResponse, { results: unknown }>>(tabId, {
     input,
     type: 'collect_results',
@@ -227,8 +233,8 @@ const collectResults = async (tabId: number, input: { limit?: number; query: str
 const executeSearchTask = async (task: BrowserTask) => {
   const tab = await getHubSpotTab();
   if (!tab?.id) throw new Error('Open a logged-in HubSpot tab before searching.');
-  const input = task.input as { limit?: number; query: string; type: RecordType };
-  const listUrl = buildListUrl(tab.url, input.type, input.query);
+  const input = task.input as SearchRecordsInput;
+  const listUrl = buildListUrl(tab.url, input);
   if (listUrl) await navigateAndWait(tab.id, listUrl);
   return { results: await collectResults(tab.id, input) };
 };
@@ -236,7 +242,7 @@ const executeSearchTask = async (task: BrowserTask) => {
 const executeOpenRecordTask = async (task: BrowserTask) => {
   const tab = await getHubSpotTab();
   if (!tab?.id) throw new Error('Open a logged-in HubSpot tab before opening a record.');
-  const input = task.input as { query?: string; record?: { url?: string; type: RecordType }; type?: RecordType; url?: string };
+  const input = task.input as { objectId?: string; objectLabel?: string; query?: string; record?: { url?: string; type: RecordType }; type?: RecordType; url?: string };
   const directUrl = input.url || input.record?.url;
 
   if (directUrl) {
@@ -249,6 +255,8 @@ const executeOpenRecordTask = async (task: BrowserTask) => {
       ...task,
       input: {
         limit: 1,
+        objectId: input.objectId,
+        objectLabel: input.objectLabel,
         query: input.query,
         type: input.type,
       },
@@ -331,10 +339,11 @@ const executeOneOperation = async (operation: Operation) => {
   const tab = await getHubSpotTab();
   if (!tab?.id) throw new Error('Open a logged-in HubSpot tab before approving an operation.');
   if (operation.kind === 'create') {
-    const listUrl = buildObjectListUrl(tab.url, operation.type);
+    const listUrl = buildObjectListUrl(tab.url, operation.type, operation.objectId);
     if (listUrl) await navigateAndWait(tab.id, listUrl);
   }
-  if (operation.target?.url) await navigateAndWait(tab.id, operation.target.url);
+  const targetUrl = operation.target?.url || operation.activity?.target?.url || operation.association?.from?.url;
+  if (targetUrl) await navigateAndWait(tab.id, targetUrl);
   const response = await sendContent<Extract<ContentResponse, { status: 'paused' | 'succeeded' }>>(tab.id, {
     operation,
     type: 'execute_operation',

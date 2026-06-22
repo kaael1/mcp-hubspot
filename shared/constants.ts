@@ -6,4 +6,25 @@ export const extensionName = 'HubSpot Browser MCP Bridge';
 export const hubspotObjectIds = {
   company: '0-2',
   contact: '0-1',
+  deal: '0-3',
+  ticket: '0-5',
+} as const;
+
+export const hubspotObjectLabels = {
+  company: {
+    plural: ['companies', 'empresas'],
+    singular: ['company', 'empresa'],
+  },
+  contact: {
+    plural: ['contacts', 'contatos'],
+    singular: ['contact', 'contato'],
+  },
+  deal: {
+    plural: ['deals', 'negocios', 'negócios'],
+    singular: ['deal', 'negocio', 'negócio'],
+  },
+  ticket: {
+    plural: ['tickets', 'chamados'],
+    singular: ['ticket', 'chamado'],
+  },
 } as const;

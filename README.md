@@ -2,7 +2,7 @@
 
 Use HubSpot from Codex or Claude Code through your logged-in browser.
 
-This project is a local MCP server plus a Chromium extension. It lets an agent read the current HubSpot page, search records, open records, create contacts or companies, update fields, fill forms without saving, and run small approved batches.
+This project is a local MCP server plus a Chromium extension. It lets an agent read the current HubSpot page, search records, open records, create and update CRM records, fill forms without saving, extract visible tables/timeline/associations, and run small approved batches.
 
 ## Why Browser Extension?
 
@@ -74,17 +74,44 @@ Copy `bridge.pairingKey`, open the extension popup, paste it, and click `Pair`. 
 Open HubSpot in Chrome or Edge and sign in normally. Then ask your agent for things like:
 
 - "Leia essa empresa aberta e me resuma tudo que importa."
-- "Procure a empresa X no HubSpot e abra o registro correto."
+- "Procure a empresa ou deal X no HubSpot e abra o registro correto."
+- "Liste os contatos, deals, tickets e atividades visiveis nessa empresa."
 - "Pegue essa lista da tela e monte uma tabela limpa."
-- "Crie uma empresa com estes dados."
+- "Crie uma empresa, contato, deal ou ticket com estes dados."
+- "Crie uma nota ou tarefa nesse registro."
+- "Associe esse contato ao deal aberto."
 - "Preencha estes campos, mas nao salve."
-- "Atualize este contato depois que eu aprovar."
+- "Atualize este contato/deal/ticket depois que eu aprovar."
+
+## Coverage
+
+Supported:
+
+- Contacts, Companies, Deals and Tickets.
+- Custom objects when you provide the HubSpot `objectId`.
+- Visible page snapshots: properties, tables/lists, associations and timeline cards.
+- Create, update, fill-without-saving and small batch update.
+
+Experimental:
+
+- Notes, tasks, calls, meetings and logged emails through the visible HubSpot activity composer.
+- Creating associations through the visible HubSpot association picker.
+- Advanced fields such as dropdowns, comboboxes, date inputs and multi-select-like controls.
+
+Out of scope by design:
+
+- Delete, merge, bulk delete and large exports.
+- Admin changes, permission changes, users/teams, workflows and integration settings.
+- Marketing email sending and report/dashboard authoring.
+- Any private app, OAuth or API-token management.
 
 ## MCP Tools
 
 - `doctor`
 - `get_context`
+- `get_coverage_matrix`
 - `get_page_snapshot`
+- `get_visible_tables`
 - `search_records`
 - `open_record`
 - `get_task`
@@ -93,6 +120,8 @@ Open HubSpot in Chrome or Edge and sign in normally. Then ask your agent for thi
 - `request_record_update`
 - `request_record_create`
 - `request_batch_update`
+- `request_timeline_activity_create`
+- `request_association_create`
 - `request_associated_contacts_create`
 - `get_operation`
 - `get_audit_log`

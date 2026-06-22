@@ -4,6 +4,8 @@ import { getDataFilePath } from './runtime-paths.js';
 import { readJsonFile, writeJsonFile } from './store-utils.js';
 import { redact } from '../shared/redaction.js';
 import type {
+  ActivityCreateInput,
+  AssociationCreateInput,
   AuditEntry,
   BrowserTask,
   FieldPatch,
@@ -164,9 +166,17 @@ export const getContext = () => ({
   capabilities: {
     canCreateCompanies: Boolean(appState.pairedExtension),
     canCreateContacts: Boolean(appState.pairedExtension),
+    canCreateDeals: Boolean(appState.pairedExtension),
+    canCreateTickets: Boolean(appState.pairedExtension),
+    canCreateTimelineActivities: Boolean(appState.pairedExtension),
+    canReadVisibleAssociations: Boolean(appState.latestSnapshot?.associations?.length),
     canReadVisiblePage: Boolean(appState.latestSnapshot),
+    canReadVisibleTables: Boolean(appState.latestSnapshot?.tables?.length),
+    canReadVisibleTimeline: Boolean(appState.latestSnapshot?.timeline?.length),
     canRunBrowserTasks: Boolean(appState.pairedExtension),
+    canUseCustomObjectsByObjectId: Boolean(appState.pairedExtension),
     canUpdateRecords: Boolean(appState.pairedExtension),
+    supportedRecordTypes: ['contact', 'company', 'deal', 'ticket', 'custom'],
   },
   latestSnapshot: appState.latestSnapshot || null,
   pairedExtension: appState.pairedExtension || null,
@@ -282,14 +292,38 @@ export const previewUpdate = (input: { fields: FieldPatch[]; target?: RecordRef 
 
 export const createOperation = async (
   input:
-    | { fields: FieldPatch[]; kind: 'create'; type: RecordType }
-    | { fields: FieldPatch[]; kind: 'update'; target?: RecordRef; type: RecordType }
-    | { fields: FieldPatch[]; kind: 'fill-only'; target?: RecordRef; type: RecordType }
+    | { fields: FieldPatch[]; kind: 'create'; objectId?: string; objectLabel?: string; type: RecordType }
+    | { fields: FieldPatch[]; kind: 'update'; objectId?: string; objectLabel?: string; target?: RecordRef; type: RecordType }
+    | { fields: FieldPatch[]; kind: 'fill-only'; objectId?: string; objectLabel?: string; target?: RecordRef; type: RecordType }
     | { company?: RecordRef; contactCreates: Array<{ fields: FieldPatch[] }>; kind: 'create-associated-contacts'; type: 'contact' }
-    | { items: Array<{ fields: FieldPatch[]; target: RecordRef }>; kind: 'batch-update'; type: RecordType },
+    | { items: Array<{ fields: FieldPatch[]; target: RecordRef }>; kind: 'batch-update'; objectId?: string; objectLabel?: string; type: RecordType }
+    | { activity: ActivityCreateInput; kind: 'create-activity'; type: RecordType }
+    | { association: AssociationCreateInput; kind: 'associate-record'; type: RecordType },
 ) => {
   const createdAt = now();
+  const objectId =
+    'objectId' in input
+      ? input.objectId
+      : 'target' in input
+        ? input.target?.objectId
+        : 'activity' in input
+          ? input.activity.target?.objectId
+          : 'association' in input
+            ? input.association.from?.objectId
+            : undefined;
+  const objectLabel =
+    'objectLabel' in input
+      ? input.objectLabel
+      : 'target' in input
+        ? input.target?.objectLabel
+        : 'activity' in input
+          ? input.activity.target?.objectLabel
+          : 'association' in input
+            ? input.association.from?.objectLabel
+            : undefined;
   const operation: Operation = operationSchema.parse({
+    activity: 'activity' in input ? input.activity : undefined,
+    association: 'association' in input ? input.association : undefined,
     createdAt,
     company: 'company' in input ? input.company : undefined,
     contactCreates: 'contactCreates' in input ? input.contactCreates : undefined,
@@ -297,6 +331,8 @@ export const createOperation = async (
     id: randomUUID(),
     items: 'items' in input ? input.items : undefined,
     kind: input.kind,
+    objectId,
+    objectLabel,
     preview: 'fields' in input ? createBeforeAfterPreview(input.fields) : undefined,
     risk: input.kind === 'batch-update' ? 'batch' : 'write',
     status: 'pending',
@@ -305,7 +341,11 @@ export const createOperation = async (
         ? `Batch update ${input.items.length} ${input.type} record(s).`
         : input.kind === 'create-associated-contacts'
           ? `Create ${input.contactCreates.length} associated contact(s).`
-        : `${input.kind === 'create' ? 'Create' : input.kind === 'fill-only' ? 'Fill' : 'Update'} ${input.type} record.`,
+          : input.kind === 'create-activity'
+            ? `Create ${input.activity.type} activity.`
+            : input.kind === 'associate-record'
+              ? `Associate ${input.association.to.displayName || input.association.to.id || input.association.to.type}.`
+              : `${input.kind === 'create' ? 'Create' : input.kind === 'fill-only' ? 'Fill' : 'Update'} ${input.type} record.`,
     target: 'target' in input ? input.target : undefined,
     type: input.type,
     updatedAt: createdAt,

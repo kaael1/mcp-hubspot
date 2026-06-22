@@ -26,4 +26,37 @@ describe('runtime state', () => {
     const approved = await state.approveOperation(operation.id);
     expect(approved.status).toBe('approved');
   });
+
+  it('creates pending deal, activity, and association operations', async () => {
+    const state = await import('../server/state.js');
+    await state.loadRuntimeState();
+
+    const deal = await state.createOperation({
+      fields: [{ label: 'Amount', name: 'amount', value: '1000' }],
+      kind: 'create',
+      type: 'deal',
+    });
+    const activity = await state.createOperation({
+      activity: {
+        body: 'Call the champion after procurement review.',
+        target: { displayName: 'Renewal deal', type: 'deal' },
+        type: 'note',
+      },
+      kind: 'create-activity',
+      type: 'deal',
+    });
+    const association = await state.createOperation({
+      association: {
+        from: { displayName: 'Acme', type: 'company' },
+        to: { displayName: 'Renewal deal', type: 'deal' },
+      },
+      kind: 'associate-record',
+      type: 'company',
+    });
+
+    expect(deal.summary).toBe('Create deal record.');
+    expect(activity.summary).toBe('Create note activity.');
+    expect(association.summary).toBe('Associate Renewal deal.');
+    expect(state.getContext().pendingOperations).toHaveLength(3);
+  });
 });

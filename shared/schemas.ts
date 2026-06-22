@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-export const recordTypeSchema = z.enum(['contact', 'company']);
+export const recordTypeSchema = z.enum(['contact', 'company', 'deal', 'ticket', 'custom']);
+export const activityTypeSchema = z.enum(['note', 'task', 'call', 'meeting', 'email']);
 export const operationStatusSchema = z.enum([
   'pending',
   'approved',
@@ -35,6 +36,7 @@ export const tableSnapshotSchema = z.object({
 
 export const associationSnapshotSchema = z.object({
   displayName: z.string(),
+  objectId: z.string().optional(),
   recordId: z.string().optional(),
   type: recordTypeSchema.optional(),
   url: z.string().url().optional(),
@@ -43,7 +45,18 @@ export const associationSnapshotSchema = z.object({
 export const recordRefSchema = z.object({
   displayName: z.string().trim().min(1).optional(),
   id: z.string().trim().min(1).optional(),
+  objectId: z.string().trim().min(1).optional(),
+  objectLabel: z.string().trim().min(1).optional(),
   type: recordTypeSchema,
+  url: z.string().url().optional(),
+});
+
+export const timelineItemSnapshotSchema = z.object({
+  actor: z.string().optional(),
+  at: z.string().optional(),
+  body: z.string().optional(),
+  title: z.string(),
+  type: activityTypeSchema.optional(),
   url: z.string().url().optional(),
 });
 
@@ -55,6 +68,7 @@ export const pageSnapshotSchema = z.object({
   recordId: z.string().trim().min(1).optional(),
   recordType: recordTypeSchema.optional(),
   tables: z.array(tableSnapshotSchema).optional(),
+  timeline: z.array(timelineItemSnapshotSchema).optional(),
   title: z.string(),
   url: z.string().url(),
 });
@@ -63,12 +77,15 @@ export const searchResultSchema = z.object({
   description: z.string().optional(),
   displayName: z.string().trim().min(1),
   id: z.string().trim().min(1).optional(),
+  objectId: z.string().trim().min(1).optional(),
   type: recordTypeSchema,
   url: z.string().url().optional(),
 });
 
 export const searchRecordsInputSchema = z.object({
   limit: z.number().int().positive().max(25).optional(),
+  objectId: z.string().trim().min(1).optional(),
+  objectLabel: z.string().trim().min(1).optional(),
   query: z.string().trim().min(1),
   timeoutMs: z.number().int().min(0).max(60_000).optional(),
   type: recordTypeSchema,
@@ -76,6 +93,8 @@ export const searchRecordsInputSchema = z.object({
 
 export const openRecordInputSchema = z
   .object({
+    objectId: z.string().trim().min(1).optional(),
+    objectLabel: z.string().trim().min(1).optional(),
     query: z.string().trim().min(1).optional(),
     record: recordRefSchema.optional(),
     timeoutMs: z.number().int().min(0).max(60_000).optional(),
@@ -96,6 +115,8 @@ export const requestRecordFillInputSchema = previewRecordUpdateInputSchema;
 
 export const requestRecordCreateInputSchema = z.object({
   fields: z.array(fieldPatchSchema).min(1),
+  objectId: z.string().trim().min(1).optional(),
+  objectLabel: z.string().trim().min(1).optional(),
   type: recordTypeSchema,
 });
 
@@ -110,6 +131,8 @@ export const contactCreateItemSchema = z.object({
 
 export const requestBatchUpdateInputSchema = z.object({
   items: z.array(batchUpdateItemSchema).min(1).max(25),
+  objectId: z.string().trim().min(1).optional(),
+  objectLabel: z.string().trim().min(1).optional(),
   type: recordTypeSchema,
 });
 
@@ -117,6 +140,29 @@ export const requestAssociatedContactsCreateInputSchema = z.object({
   company: recordRefSchema.optional(),
   contacts: z.array(contactCreateItemSchema).min(1).max(25),
 });
+
+export const activityCreateInputSchema = z
+  .object({
+    body: z.string().optional(),
+    dueDate: z.string().optional(),
+    fields: z.array(fieldPatchSchema).optional(),
+    target: recordRefSchema.optional(),
+    title: z.string().optional(),
+    type: activityTypeSchema,
+  })
+  .refine((value) => Boolean(value.body || value.title || value.fields?.length), {
+    message: 'Provide title, body, or fields for the activity.',
+  });
+
+export const requestTimelineActivityCreateInputSchema = activityCreateInputSchema;
+
+export const associationCreateInputSchema = z.object({
+  from: recordRefSchema.optional(),
+  label: z.string().trim().min(1).optional(),
+  to: recordRefSchema,
+});
+
+export const requestAssociationCreateInputSchema = associationCreateInputSchema;
 
 export const getOperationInputSchema = z.object({
   operationId: z.string().trim().min(1),
@@ -152,6 +198,8 @@ export const operationItemResultSchema = z.object({
 
 export const operationSchema = z.object({
   approvedAt: z.string().optional(),
+  activity: activityCreateInputSchema.optional(),
+  association: associationCreateInputSchema.optional(),
   completedAt: z.string().optional(),
   createdAt: z.string(),
   error: z.string().optional(),
@@ -161,7 +209,17 @@ export const operationSchema = z.object({
   id: z.string().trim().min(1),
   items: z.array(batchUpdateItemSchema).optional(),
   itemResults: z.array(operationItemResultSchema).optional(),
-  kind: z.enum(['create', 'update', 'batch-update', 'fill-only', 'create-associated-contacts']),
+  kind: z.enum([
+    'create',
+    'update',
+    'batch-update',
+    'fill-only',
+    'create-associated-contacts',
+    'create-activity',
+    'associate-record',
+  ]),
+  objectId: z.string().trim().min(1).optional(),
+  objectLabel: z.string().trim().min(1).optional(),
   preview: z
     .object({
       after: z.array(fieldSnapshotSchema),
@@ -220,6 +278,9 @@ export const operationResultSchema = z.object({
 });
 
 export type AuditEntry = z.infer<typeof auditEntrySchema>;
+export type ActivityCreateInput = z.infer<typeof activityCreateInputSchema>;
+export type ActivityType = z.infer<typeof activityTypeSchema>;
+export type AssociationCreateInput = z.infer<typeof associationCreateInputSchema>;
 export type AssociationSnapshot = z.infer<typeof associationSnapshotSchema>;
 export type BatchUpdateItem = z.infer<typeof batchUpdateItemSchema>;
 export type ContactCreateItem = z.infer<typeof contactCreateItemSchema>;
@@ -234,3 +295,4 @@ export type RecordType = z.infer<typeof recordTypeSchema>;
 export type SearchRecordsInput = z.infer<typeof searchRecordsInputSchema>;
 export type SearchResult = z.infer<typeof searchResultSchema>;
 export type TableSnapshot = z.infer<typeof tableSnapshotSchema>;
+export type TimelineItemSnapshot = z.infer<typeof timelineItemSnapshotSchema>;

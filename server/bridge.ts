@@ -14,8 +14,10 @@ import {
   pageSnapshotSchema,
   pairRequestSchema,
   previewRecordUpdateInputSchema,
+  requestAssociationCreateInputSchema,
   requestAssociatedContactsCreateInputSchema,
   requestBatchUpdateInputSchema,
+  requestTimelineActivityCreateInputSchema,
   requestRecordFillInputSchema,
   requestRecordCreateInputSchema,
   requestRecordUpdateInputSchema,
@@ -45,6 +47,7 @@ import {
   verifyPairingKey,
   waitForTask,
 } from './state.js';
+import { coverageMatrix } from '../shared/coverage.js';
 
 const allowedOrigin = (request: IncomingMessage) => {
   const origin = request.headers.origin;
@@ -136,7 +139,9 @@ const runBrowserTask = async (
 const commandMetadata = [
   { name: 'doctor', risk: 'read' },
   { name: 'get_context', risk: 'read' },
+  { name: 'get_coverage_matrix', risk: 'read' },
   { name: 'get_page_snapshot', risk: 'read' },
+  { name: 'get_visible_tables', risk: 'read' },
   { name: 'search_records', risk: 'read' },
   { name: 'open_record', risk: 'read' },
   { name: 'get_task', risk: 'read' },
@@ -145,6 +150,8 @@ const commandMetadata = [
   { name: 'request_record_fill', risk: 'write' },
   { name: 'request_record_create', risk: 'write' },
   { name: 'request_batch_update', risk: 'write' },
+  { name: 'request_timeline_activity_create', risk: 'write' },
+  { name: 'request_association_create', risk: 'write' },
   { name: 'request_associated_contacts_create', risk: 'write' },
   { name: 'get_operation', risk: 'read' },
   { name: 'get_audit_log', risk: 'read' },
@@ -154,6 +161,7 @@ const commandMetadata = [
 const executeLocalCommand = async (name: string, input: unknown) => {
   if (name === 'doctor') return getDoctorPayload();
   if (name === 'get_context') return { context: getContext(), ok: true };
+  if (name === 'get_coverage_matrix') return { coverage: coverageMatrix, ok: true };
   if (name === 'get_page_snapshot') {
     const { timeoutMs = 5_000 } = browserTaskTimeoutInputSchema.parse(input);
     const result = await runBrowserTask('capture_snapshot', {}, timeoutMs);
@@ -164,6 +172,17 @@ const executeLocalCommand = async (name: string, input: unknown) => {
     const snapshot = pageSnapshotSchema.parse((result as { snapshot?: unknown })?.snapshot || result);
     await saveSnapshot(snapshot);
     return { ok: true, snapshot };
+  }
+  if (name === 'get_visible_tables') {
+    const { timeoutMs = 5_000 } = browserTaskTimeoutInputSchema.parse(input);
+    const result = await runBrowserTask('capture_snapshot', {}, timeoutMs);
+    if ((result as { taskId?: unknown }).taskId) {
+      const pending = result as { status: string; taskId: string };
+      return { ok: true, status: pending.status, taskId: pending.taskId };
+    }
+    const snapshot = pageSnapshotSchema.parse((result as { snapshot?: unknown })?.snapshot || result);
+    await saveSnapshot(snapshot);
+    return { ok: true, tables: snapshot.tables || [] };
   }
   if (name === 'search_records') {
     const parsed = searchRecordsInputSchema.parse(input);
@@ -180,19 +199,41 @@ const executeLocalCommand = async (name: string, input: unknown) => {
   if (name === 'preview_record_update') return { ok: true, ...previewUpdate(previewRecordUpdateInputSchema.parse(input)) };
   if (name === 'request_record_update') {
     const parsed = requestRecordUpdateInputSchema.parse(input);
-    return createOperation({ fields: parsed.fields, kind: 'update', target: parsed.target, type: parsed.target?.type || 'contact' });
+    return createOperation({
+      fields: parsed.fields,
+      kind: 'update',
+      objectId: parsed.target?.objectId,
+      objectLabel: parsed.target?.objectLabel,
+      target: parsed.target,
+      type: parsed.target?.type || 'contact',
+    });
   }
   if (name === 'request_record_fill') {
     const parsed = requestRecordFillInputSchema.parse(input);
-    return createOperation({ fields: parsed.fields, kind: 'fill-only', target: parsed.target, type: parsed.target?.type || 'contact' });
+    return createOperation({
+      fields: parsed.fields,
+      kind: 'fill-only',
+      objectId: parsed.target?.objectId,
+      objectLabel: parsed.target?.objectLabel,
+      target: parsed.target,
+      type: parsed.target?.type || 'contact',
+    });
   }
   if (name === 'request_record_create') {
     const parsed = requestRecordCreateInputSchema.parse(input);
-    return createOperation({ fields: parsed.fields, kind: 'create', type: parsed.type });
+    return createOperation({ fields: parsed.fields, kind: 'create', objectId: parsed.objectId, objectLabel: parsed.objectLabel, type: parsed.type });
   }
   if (name === 'request_batch_update') {
     const parsed = requestBatchUpdateInputSchema.parse(input);
-    return createOperation({ items: parsed.items, kind: 'batch-update', type: parsed.type });
+    return createOperation({ items: parsed.items, kind: 'batch-update', objectId: parsed.objectId, objectLabel: parsed.objectLabel, type: parsed.type });
+  }
+  if (name === 'request_timeline_activity_create') {
+    const parsed = requestTimelineActivityCreateInputSchema.parse(input);
+    return createOperation({ activity: parsed, kind: 'create-activity', type: parsed.target?.type || 'contact' });
+  }
+  if (name === 'request_association_create') {
+    const parsed = requestAssociationCreateInputSchema.parse(input);
+    return createOperation({ association: parsed, kind: 'associate-record', type: parsed.from?.type || parsed.to.type });
   }
   if (name === 'request_associated_contacts_create') {
     const parsed = requestAssociatedContactsCreateInputSchema.parse(input);

@@ -1,4 +1,5 @@
 import type { ExtensionStatus } from './types.js';
+import type { Operation } from '../shared/schemas.js';
 
 const statusEl = document.getElementById('status') as HTMLElement;
 const operationsEl = document.getElementById('operations') as HTMLElement;
@@ -28,6 +29,35 @@ const fieldList = (fields: Array<{ label?: string; name: string; value: string }
     )
     .join('');
 
+const operationDetails = (operation: Operation) => {
+  const fields = fieldList(operation.fields);
+  if (operation.kind === 'create-activity' && operation.activity) {
+    return `
+      <ul>
+        <li><strong>Activity</strong><span>${escapeHtml(operation.activity.type)}</span></li>
+        ${operation.activity.title ? `<li><strong>Title</strong><span>${escapeHtml(operation.activity.title)}</span></li>` : ''}
+        ${operation.activity.body ? `<li><strong>Body</strong><span>${escapeHtml(operation.activity.body)}</span></li>` : ''}
+        ${fieldList(operation.activity.fields)}
+      </ul>
+    `;
+  }
+
+  if (operation.kind === 'associate-record' && operation.association) {
+    return `
+      <ul>
+        ${
+          operation.association.from
+            ? `<li><strong>From</strong><span>${escapeHtml(operation.association.from.displayName || operation.association.from.id || operation.association.from.type)}</span></li>`
+            : ''
+        }
+        <li><strong>To</strong><span>${escapeHtml(operation.association.to.displayName || operation.association.to.id || operation.association.to.type)}</span></li>
+      </ul>
+    `;
+  }
+
+  return `<ul>${fields}</ul>`;
+};
+
 const escapeHtml = (value: string) =>
   value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] || char);
 
@@ -48,7 +78,7 @@ const render = (status: ExtensionStatus) => {
               <article class="operation">
                 <h2>${escapeHtml(operation.summary)}</h2>
                 <p>${escapeHtml(operation.kind)} · ${escapeHtml(operation.type)} · ${escapeHtml(operation.status)}</p>
-                <ul>${fieldList(operation.fields)}</ul>
+                ${operationDetails(operation)}
                 ${
                   operation.kind === 'batch-update'
                     ? `<p>${operation.items?.length || 0} item(s) in this batch.</p>`

@@ -1,4 +1,5 @@
 import type {
+  ActivityType,
   AssociationSnapshot,
   FieldPatch,
   FieldSnapshot,
@@ -8,7 +9,7 @@ import type {
   SearchResult,
   TableSnapshot,
 } from '../shared/schemas.js';
-import { hubspotObjectIds } from '../shared/constants.js';
+import { hubspotObjectIds, hubspotObjectLabels } from '../shared/constants.js';
 import type { ContentCommand, ContentResponse } from './types.js';
 
 const text = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
@@ -21,18 +22,32 @@ const isVisible = (element: Element) => {
   return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
 };
 
+const objectIdToRecordType = Object.fromEntries(
+  Object.entries(hubspotObjectIds).map(([recordType, objectId]) => [objectId, recordType]),
+) as Record<string, Exclude<RecordType, 'custom'>>;
+
+const getObjectId = (type: RecordType, objectId?: string) => (type === 'custom' ? objectId : hubspotObjectIds[type]);
+
+const detectObjectId = (url = window.location.href) => {
+  const route = url.match(/\/(?:record|objects)\/([^/?#]+)(?:[/?#]|$)/i);
+  if (!route?.[1] || /^views$/i.test(route[1])) return undefined;
+  return decodeURIComponent(route[1]);
+};
+
 const detectRecordType = (url = window.location.href): RecordType | undefined => {
-  if (url.includes('/objects/0-2/') || url.includes('/record/0-2/') || url.includes('/0-2/')) return 'company';
-  if (url.includes('/objects/0-1/') || url.includes('/record/0-1/') || url.includes('/0-1/')) return 'contact';
-  if (url.includes('/companies')) return 'company';
-  if (url.includes('/contacts')) return 'contact';
+  const objectId = detectObjectId(url);
+  if (objectId) return objectIdToRecordType[objectId] || 'custom';
+  if (/\/companies(?:\/|$)/i.test(url)) return 'company';
+  if (/\/contacts(?:\/|$)/i.test(url)) return 'contact';
+  if (/\/deals(?:\/|$)/i.test(url)) return 'deal';
+  if (/\/tickets(?:\/|$)/i.test(url)) return 'ticket';
   return undefined;
 };
 
 const detectRecordId = (url = window.location.href) => {
-  const objectMatch = url.match(/\/(?:record|objects)\/(?:0-1|0-2)\/(?!views(?:\/|$))([^/?#]+)/i);
-  if (objectMatch?.[1]) return decodeURIComponent(objectMatch[1]);
-  const legacyMatch = url.match(/\/(?:contact|company)\/(\d+)/i);
+  const objectMatch = url.match(/\/(?:record|objects)\/([^/?#]+)\/(?!views(?:\/|$))([^/?#]+)/i);
+  if (objectMatch?.[2]) return decodeURIComponent(objectMatch[2]);
+  const legacyMatch = url.match(/\/(?:contact|company|deal|ticket)\/(\d+)/i);
   return legacyMatch?.[1] ? decodeURIComponent(legacyMatch[1]) : undefined;
 };
 
@@ -142,13 +157,14 @@ const collectAssociations = (): AssociationSnapshot[] => {
   for (const anchor of [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].filter(isVisible).slice(0, 250)) {
     const href = anchor.href;
     const type = detectRecordType(href);
-    if (!type || !/\/record\/0-[12]\//.test(href)) continue;
+    if (!type || !/\/(?:record|objects)\/[^/]+\/(?!views(?:\/|$))[^/?#]+/i.test(href)) continue;
 
     const displayName = visibleText(anchor);
     if (!displayName || seen.has(href)) continue;
     seen.add(href);
     associations.push({
       displayName,
+      objectId: detectObjectId(href),
       recordId: detectRecordId(href),
       type,
       url: href,
@@ -156,6 +172,74 @@ const collectAssociations = (): AssociationSnapshot[] => {
   }
 
   return associations.slice(0, 80);
+};
+
+const detectActivityType = (value: string): ActivityType | undefined => {
+  if (/(^|\b)(note|nota|anotação|anotacao)(\b|$)/i.test(value)) return 'note';
+  if (/(^|\b)(task|tarefa)(\b|$)/i.test(value)) return 'task';
+  if (/(^|\b)(call|chamada|ligação|ligacao)(\b|$)/i.test(value)) return 'call';
+  if (/(^|\b)(meeting|reunião|reuniao)(\b|$)/i.test(value)) return 'meeting';
+  if (/(^|\b)(email|e-mail)(\b|$)/i.test(value)) return 'email';
+  return undefined;
+};
+
+const collectTimeline = () => {
+  const containers = [
+    ...document.querySelectorAll<HTMLElement>(
+      [
+        '[data-test-id*="timeline"]',
+        '[data-testid*="timeline"]',
+        '[data-selenium-test*="timeline"]',
+        '[aria-label*="Activity"]',
+        '[aria-label*="Atividade"]',
+        '[class*="timeline"]',
+        '[class*="Timeline"]',
+      ].join(', '),
+    ),
+  ].filter(isVisible);
+
+  const candidates = (
+    containers.length > 0
+      ? containers.flatMap((container) => [
+          ...container.querySelectorAll<HTMLElement>(
+            'article, li, section, [role="listitem"], [data-test-id*="activity"], [data-testid*="activity"]',
+          ),
+        ])
+      : [
+          ...document.querySelectorAll<HTMLElement>(
+            'article, li, section, [role="listitem"], [data-test-id*="activity"], [data-testid*="activity"]',
+          ),
+        ]
+  ).filter(isVisible);
+
+  const seen = new Set<string>();
+  return candidates
+    .map((candidate) => {
+      const fullText = visibleText(candidate);
+      if (!fullText || fullText.length < 8 || fullText.length > 2000) return null;
+      const title =
+        visibleText(candidate.querySelector('h1, h2, h3, h4, strong, [data-test-id*="title"], [data-testid*="title"]')) ||
+        fullText.slice(0, 120);
+      const key = `${title}:${fullText.slice(0, 200)}`;
+      if (seen.has(key)) return null;
+      seen.add(key);
+
+      const link = candidate.querySelector<HTMLAnchorElement>('a[href]');
+      const timeText =
+        candidate.querySelector<HTMLTimeElement>('time')?.dateTime ||
+        visibleText(candidate.querySelector('time, [datetime], [data-test-id*="date"], [data-testid*="date"]'));
+
+      return {
+        actor: visibleText(candidate.querySelector('[data-test-id*="user"], [data-testid*="user"], [class*="user"], [class*="User"]')) || undefined,
+        at: timeText || undefined,
+        body: fullText === title ? undefined : fullText.slice(0, 1000),
+        title,
+        type: detectActivityType(fullText),
+        url: link?.href,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .slice(0, 40);
 };
 
 const captureSnapshot = (): PageSnapshot => ({
@@ -166,13 +250,30 @@ const captureSnapshot = (): PageSnapshot => ({
   recordId: detectRecordId(),
   recordType: detectRecordType(),
   tables: collectTables(),
+  timeline: collectTimeline(),
   title: document.title,
   url: window.location.href,
 });
 
-const collectResults = ({ limit = 25, query, type }: { limit?: number; query: string; type: RecordType }) => {
+const collectResults = ({
+  limit = 25,
+  objectId,
+  objectLabel,
+  query,
+  type,
+}: {
+  limit?: number;
+  objectId?: string;
+  objectLabel?: string;
+  query: string;
+  type: RecordType;
+}) => {
   const normalizedQuery = query.toLowerCase();
-  const objectId = hubspotObjectIds[type];
+  const resolvedObjectId = getObjectId(type, objectId);
+  const labels =
+    type === 'custom'
+      ? [objectLabel, objectId].filter(Boolean).map(String)
+      : [...hubspotObjectLabels[type].singular, ...hubspotObjectLabels[type].plural];
   const anchors = [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].filter(isVisible);
   const results: SearchResult[] = [];
   const seen = new Set<string>();
@@ -181,7 +282,11 @@ const collectResults = ({ limit = 25, query, type }: { limit?: number; query: st
     const href = anchor.href;
     const label = visibleText(anchor);
     const haystack = `${label} ${href}`.toLowerCase();
-    if (!href.includes(objectId) && !href.toLowerCase().includes(type === 'contact' ? 'contact' : 'compan')) continue;
+    const isTargetObject =
+      (resolvedObjectId && href.includes(resolvedObjectId)) ||
+      labels.some((part) => part && href.toLowerCase().includes(part.toLowerCase())) ||
+      (type === 'custom' && /\/(?:record|objects)\/[^/]+\/(?!views(?:\/|$))[^/?#]+/i.test(href));
+    if (!isTargetObject) continue;
     if (normalizedQuery && !haystack.includes(normalizedQuery)) continue;
     if (!label || seen.has(href)) continue;
 
@@ -190,6 +295,7 @@ const collectResults = ({ limit = 25, query, type }: { limit?: number; query: st
       description: visibleText(anchor.closest('tr, [role="row"], li, div')),
       displayName: label,
       id: detectRecordId(href),
+      objectId: detectObjectId(href) || resolvedObjectId,
       type,
       url: href,
     });
@@ -219,21 +325,48 @@ const findMenuButton = (patterns: RegExp[]) => {
 
 const findInputForField = (field: FieldPatch) => {
   const aliases: Record<string, string[]> = {
+    amount: ['amount', 'valor'],
+    closedate: ['close date', 'data de fechamento', 'data de fecho'],
     company: ['company', 'empresa'],
+    content: ['content', 'body', 'conteúdo', 'conteudo', 'descrição', 'descricao'],
     domain: ['domain', 'domínio', 'dominio', 'company domain name', 'domínio da empresa', 'dominio da empresa'],
+    dealname: ['deal name', 'nome do negócio', 'nome do negocio', 'negócio', 'negocio'],
+    dealstage: ['deal stage', 'stage', 'etapa', 'fase'],
+    description: ['description', 'descrição', 'descricao'],
+    duedate: ['due date', 'data de vencimento', 'vencimento'],
     email: ['email', 'e-mail'],
     firstname: ['first name', 'firstname', 'nome'],
+    hs_pipeline: ['pipeline', 'funil'],
+    hs_pipeline_stage: ['pipeline stage', 'status', 'etapa', 'fase'],
+    hubspot_owner_id: ['owner', 'proprietário', 'proprietario', 'responsável', 'responsavel'],
+    jobtitle: ['job title', 'cargo'],
     lastname: ['last name', 'lastname', 'sobrenome'],
+    lifecyclestage: ['lifecycle stage', 'estágio do ciclo de vida', 'estagio do ciclo de vida'],
     name: ['name', 'nome', 'company name', 'nome da empresa'],
     phone: ['phone', 'telefone'],
+    pipeline: ['pipeline', 'funil'],
+    source_type: ['source', 'fonte'],
+    subject: ['subject', 'assunto', 'titulo', 'título'],
+    ticketname: ['ticket name', 'nome do ticket', 'assunto'],
+    ticketstage: ['ticket status', 'status do ticket', 'status'],
     website: ['website', 'site'],
   };
   const wanted = [field.name, field.label, ...(aliases[field.name.toLowerCase()] || [])]
     .filter(Boolean)
     .map((part) => String(part).toLowerCase());
   const controls = [
-    ...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-      'input, textarea, select, [role="textbox"], [contenteditable="true"]',
+    ...document.querySelectorAll<HTMLElement>(
+      [
+        'input',
+        'textarea',
+        'select',
+        '[role="textbox"]',
+        '[role="combobox"]',
+        '[aria-haspopup="listbox"]',
+        '[contenteditable="true"]',
+        '[data-test-id*="property"] button',
+        '[data-testid*="property"] button',
+      ].join(', '),
     ),
   ].filter(isVisible);
 
@@ -251,15 +384,77 @@ const findInputForField = (field: FieldPatch) => {
   return null;
 };
 
-const setNativeValue = (control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) => {
-  control.focus();
-  if ('value' in control) control.value = value;
-  if (control.getAttribute('contenteditable') === 'true') control.textContent = value;
+const dispatchFieldEvents = (control: HTMLElement) => {
   control.dispatchEvent(new Event('input', { bubbles: true }));
   control.dispatchEvent(new Event('change', { bubbles: true }));
 };
 
-const fillFields = (fields: FieldPatch[]) => {
+const setNativeValue = (control: HTMLInputElement | HTMLTextAreaElement, value: string) => {
+  const prototype = control instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const valueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+  control.focus();
+  if (valueSetter) valueSetter.call(control, value);
+  else control.value = value;
+  dispatchFieldEvents(control);
+};
+
+const clickMatchingOption = async (value: string) => {
+  await wait(500);
+  const normalizedValue = value.toLowerCase();
+  const options = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[role="option"], [role="menuitem"], [data-test-id*="option"], [data-testid*="option"], li, button',
+    ),
+  ].filter(isVisible);
+  const exact = options.find((option) => visibleText(option).toLowerCase() === normalizedValue);
+  const partial = options.find((option) => visibleText(option).toLowerCase().includes(normalizedValue));
+  const target = exact || partial;
+  if (!target) return false;
+  target.click();
+  await wait(300);
+  return true;
+};
+
+const setControlValue = async (control: HTMLElement, value: string) => {
+  if (control instanceof HTMLSelectElement) {
+    const matchedOption = [...control.options].find(
+      (option) => option.value.toLowerCase() === value.toLowerCase() || visibleText(option).toLowerCase() === value.toLowerCase(),
+    );
+    if (matchedOption) control.value = matchedOption.value;
+    else control.value = value;
+    dispatchFieldEvents(control);
+    return true;
+  }
+
+  if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) {
+    setNativeValue(control, value);
+    if (control.getAttribute('role') === 'combobox') {
+      await clickMatchingOption(value);
+    }
+    return true;
+  }
+
+  if (control.getAttribute('contenteditable') === 'true' || control.getAttribute('role') === 'textbox') {
+    control.focus();
+    control.textContent = value;
+    dispatchFieldEvents(control);
+    return true;
+  }
+
+  if (control.getAttribute('role') === 'combobox' || control.getAttribute('aria-haspopup') === 'listbox' || control.tagName === 'BUTTON') {
+    control.click();
+    await wait(400);
+    const activeInput =
+      document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement ? document.activeElement : null;
+    if (activeInput) setNativeValue(activeInput, value);
+    const clicked = await clickMatchingOption(value);
+    if (clicked) return true;
+  }
+
+  return false;
+};
+
+const fillFields = async (fields: FieldPatch[]) => {
   const missing: string[] = [];
 
   for (const field of fields) {
@@ -268,7 +463,8 @@ const fillFields = (fields: FieldPatch[]) => {
       missing.push(field.label || field.name);
       continue;
     }
-    setNativeValue(control, field.value);
+    const applied = await setControlValue(control, field.value);
+    if (!applied) missing.push(field.label || field.name);
   }
 
   return missing;
@@ -277,7 +473,7 @@ const fillFields = (fields: FieldPatch[]) => {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const clickSave = async () => {
-  const saveButton = findButton([/^save$/i, /create/i, /salvar/i, /criar/i]);
+  const saveButton = findButton([/^save$/i, /create/i, /salvar/i, /criar/i, /done/i, /log/i, /registrar/i, /concluir/i]);
   if (!saveButton) return false;
   saveButton.click();
   await wait(1200);
@@ -292,7 +488,7 @@ const executeUpdate = async (
   | { error: string; ok: true; status: 'paused' }
   | { ok: true; result: PageSnapshot; status: 'succeeded' }
 > => {
-  const missing = fillFields(operation.fields || []);
+  const missing = await fillFields(operation.fields || []);
   if (missing.length > 0) {
     return {
       error: `Could not find editable fields: ${missing.join(', ')}`,
@@ -324,6 +520,19 @@ const executeUpdate = async (
   };
 };
 
+const createButtonPatterns = (operation: Operation) => {
+  if (operation.objectLabel) return [new RegExp(`create\\s+${operation.objectLabel}`, 'i'), new RegExp(`criar\\s+${operation.objectLabel}`, 'i')];
+  if (operation.type === 'custom') return [/create/i, /criar/i, /adicionar/i];
+
+  const labels = hubspotObjectLabels[operation.type];
+  const terms = [...labels.singular, ...labels.plural].map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return [
+    new RegExp(`adicionar\\s+(${terms.join('|')})`, 'i'),
+    new RegExp(`create\\s+(${terms.join('|')})`, 'i'),
+    new RegExp(`criar\\s+(${terms.join('|')})`, 'i'),
+  ];
+};
+
 const executeCreate = async (operation: Operation) => {
   let createButton =
     document.querySelector<HTMLElement>('[data-test-id="create-object-dropdown-create-object"], [data-testid="create-object-dropdown-create-object"]') ||
@@ -332,11 +541,7 @@ const executeCreate = async (operation: Operation) => {
   if (!createButton) {
     const addButton =
       document.querySelector<HTMLElement>('[data-test-id="create-object-dropdown"], [data-testid="create-object-dropdown"]') ||
-      findButton([
-        operation.type === 'company'
-          ? /adicionar empresas?|create company|criar empresa/i
-          : /adicionar contatos?|create contact|criar contato/i,
-      ]);
+      findButton(createButtonPatterns(operation));
 
     if (addButton) {
       addButton.click();
@@ -356,9 +561,110 @@ const executeCreate = async (operation: Operation) => {
   return executeUpdate(operation);
 };
 
+const activityPatterns: Record<ActivityType, RegExp[]> = {
+  call: [/call/i, /chamada/i, /ligação/i, /ligacao/i],
+  email: [/email/i, /e-mail/i],
+  meeting: [/meeting/i, /reunião/i, /reuniao/i],
+  note: [/note/i, /nota/i, /anotação/i, /anotacao/i],
+  task: [/task/i, /tarefa/i],
+};
+
+const executeActivityCreate = async (operation: Operation) => {
+  const activity = operation.activity;
+  if (!activity) return { error: 'Activity payload is missing.', ok: false as const };
+
+  const activityButton = findButton(activityPatterns[activity.type]);
+  if (activityButton) {
+    activityButton.click();
+    await wait(1200);
+  }
+
+  const fields: FieldPatch[] = [
+    ...(activity.title ? [{ label: 'Title', name: 'subject', value: activity.title }] : []),
+    ...(activity.body ? [{ label: 'Body', name: 'body', value: activity.body }] : []),
+    ...(activity.dueDate ? [{ label: 'Due date', name: 'duedate', value: activity.dueDate }] : []),
+    ...(activity.fields || []),
+  ];
+
+  const missing = await fillFields(fields);
+  if (missing.length > 0) {
+    return {
+      error: `Could not find editable activity fields: ${missing.join(', ')}`,
+      ok: false as const,
+    };
+  }
+
+  const saved = await clickSave();
+  if (!saved) {
+    return {
+      error: 'Activity fields were filled, but no visible save/log button was found. User action is required.',
+      ok: true as const,
+      status: 'paused' as const,
+    };
+  }
+
+  return {
+    ok: true as const,
+    result: captureSnapshot(),
+    status: 'succeeded' as const,
+  };
+};
+
+const executeAssociationCreate = async (operation: Operation) => {
+  const association = operation.association;
+  if (!association) return { error: 'Association payload is missing.', ok: false as const };
+
+  const targetName = association.to.displayName || association.to.id || association.to.url;
+  if (!targetName) return { error: 'Association target needs displayName, id, or url.', ok: false as const };
+
+  const associationButton = findButton([
+    /associate/i,
+    /association/i,
+    /associar/i,
+    /associação/i,
+    /associacao/i,
+    /adicionar/i,
+    /add/i,
+  ]);
+  if (associationButton) {
+    associationButton.click();
+    await wait(1200);
+  }
+
+  const missing = await fillFields([
+    {
+      label: association.label || association.to.objectLabel || association.to.type,
+      name: association.to.objectLabel || association.to.type,
+      value: targetName,
+    },
+  ]);
+
+  if (missing.length > 0) {
+    return {
+      error: `Could not find an association picker for ${targetName}.`,
+      ok: false as const,
+    };
+  }
+
+  const saved = await clickSave();
+  if (!saved) {
+    return {
+      error: 'Association target was entered, but no visible save button was found. User action is required.',
+      ok: true as const,
+      status: 'paused' as const,
+    };
+  }
+
+  return {
+    ok: true as const,
+    result: captureSnapshot(),
+    status: 'succeeded' as const,
+  };
+};
+
 const executeOperation = async (operation: Operation): Promise<ContentResponse> => {
   if (operation.kind === 'create') {
-  const result = await executeCreate(operation);
+    const result = await executeCreate(operation);
     return result.ok ? result : { error: result.error, ok: false };
   }
 
@@ -369,6 +675,16 @@ const executeOperation = async (operation: Operation): Promise<ContentResponse> 
 
   if (operation.kind === 'fill-only') {
     const result = await executeUpdate(operation, { save: false });
+    return result.ok ? result : { error: result.error, ok: false };
+  }
+
+  if (operation.kind === 'create-activity') {
+    const result = await executeActivityCreate(operation);
+    return result.ok ? result : { error: result.error, ok: false };
+  }
+
+  if (operation.kind === 'associate-record') {
+    const result = await executeAssociationCreate(operation);
     return result.ok ? result : { error: result.error, ok: false };
   }
 

@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   operationSchema,
   pageSnapshotSchema,
+  requestAssociationCreateInputSchema,
   requestAssociatedContactsCreateInputSchema,
   requestBatchUpdateInputSchema,
   requestRecordFillInputSchema,
   requestRecordCreateInputSchema,
+  requestTimelineActivityCreateInputSchema,
   searchRecordsInputSchema,
 } from '../shared/schemas.js';
 
@@ -16,6 +18,14 @@ describe('shared schemas', () => {
       query: 'Acme',
       type: 'contact',
     });
+  });
+
+  it('accepts deals, tickets, and custom object searches', () => {
+    expect(searchRecordsInputSchema.parse({ query: 'Renewal', type: 'deal' }).type).toBe('deal');
+    expect(searchRecordsInputSchema.parse({ query: 'Support', type: 'ticket' }).type).toBe('ticket');
+    expect(searchRecordsInputSchema.parse({ objectId: '2-123456', objectLabel: 'Subscription', query: 'Gold', type: 'custom' }).objectId).toBe(
+      '2-123456',
+    );
   });
 
   it('limits batch updates to 25 items', () => {
@@ -63,10 +73,31 @@ describe('shared schemas', () => {
         capturedAt: '2026-06-22T00:00:00.000Z',
         fields: [],
         tables: [{ columns: ['Name'], rows: [{ Name: 'Acme' }] }],
+        timeline: [{ body: 'Called Jane about renewal', title: 'Call', type: 'call' }],
         title: 'Companies',
         url: 'https://app.hubspot.com/contacts/1/objects/0-2/views/all/list',
       }).tables?.[0]?.rows[0]?.Name,
     ).toBe('Acme');
+  });
+
+  it('accepts timeline activity creation requests', () => {
+    expect(
+      requestTimelineActivityCreateInputSchema.parse({
+        body: 'Follow up next week',
+        target: { type: 'deal', url: 'https://app.hubspot.com/contacts/1/record/0-3/99' },
+        title: 'Follow-up',
+        type: 'task',
+      }).target?.type,
+    ).toBe('deal');
+  });
+
+  it('accepts association creation requests', () => {
+    expect(
+      requestAssociationCreateInputSchema.parse({
+        from: { displayName: 'Acme', type: 'company' },
+        to: { displayName: 'Renewal deal', type: 'deal' },
+      }).to.type,
+    ).toBe('deal');
   });
 
   it('allows skipped item results for partially completed batches', () => {
@@ -83,5 +114,35 @@ describe('shared schemas', () => {
         updatedAt: '2026-06-22T00:00:00.000Z',
       }).itemResults?.[0]?.status,
     ).toBe('skipped');
+  });
+
+  it('allows activity and association operations', () => {
+    expect(
+      operationSchema.parse({
+        activity: { body: 'Decision maker confirmed', type: 'note' },
+        createdAt: '2026-06-22T00:00:00.000Z',
+        id: 'op_activity',
+        kind: 'create-activity',
+        risk: 'write',
+        status: 'pending',
+        summary: 'Create note activity.',
+        type: 'company',
+        updatedAt: '2026-06-22T00:00:00.000Z',
+      }).kind,
+    ).toBe('create-activity');
+
+    expect(
+      operationSchema.parse({
+        association: { to: { displayName: 'Jane Doe', type: 'contact' } },
+        createdAt: '2026-06-22T00:00:00.000Z',
+        id: 'op_association',
+        kind: 'associate-record',
+        risk: 'write',
+        status: 'pending',
+        summary: 'Associate Jane Doe.',
+        type: 'company',
+        updatedAt: '2026-06-22T00:00:00.000Z',
+      }).kind,
+    ).toBe('associate-record');
   });
 });
