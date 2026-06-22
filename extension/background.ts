@@ -223,6 +223,14 @@ const buildObjectListUrl = (baseUrl: string | undefined, type: RecordType, objec
   return `https://app.hubspot.com/contacts/${portalId}/objects/${resolvedObjectId}/views/all/list`;
 };
 
+const buildCreateEmbedUrl = (baseUrl: string | undefined, type: RecordType, objectId?: string) => {
+  const portalId = detectPortalId(baseUrl);
+  if (!portalId) return null;
+  const resolvedObjectId = getObjectId(type, objectId);
+  if (!resolvedObjectId) return null;
+  return `https://app.hubspot.com/object-builder/${portalId}/${resolvedObjectId}/embed?`;
+};
+
 const navigateAndWait = async (tabId: number, url: string) => {
   await updateTab(tabId, { active: true, url });
   await waitForTabComplete(tabId);
@@ -381,13 +389,19 @@ const executeOneOperation = async (operation: Operation) => {
   const tab = await getHubSpotTab();
   if (!tab?.id) throw new Error('Open a logged-in HubSpot tab before approving an operation.');
   if (operation.kind === 'create') {
-    const listUrl = buildObjectListUrl(tab.url, operation.type, operation.objectId);
-    if (listUrl) await navigateAndWait(tab.id, listUrl);
-    await sendContent<Extract<ContentResponse, { status: 'paused' | 'succeeded' }>>(tab.id, {
-      operation,
-      type: 'open_create_form',
-    });
-    await sleep(1800);
+    const createEmbedUrl = buildCreateEmbedUrl(tab.url, operation.type, operation.objectId);
+    if (createEmbedUrl) {
+      await navigateAndWait(tab.id, createEmbedUrl);
+    } else {
+      const listUrl = buildObjectListUrl(tab.url, operation.type, operation.objectId);
+      if (listUrl) await navigateAndWait(tab.id, listUrl);
+      const opened = await sendContent<Extract<ContentResponse, { status: 'paused' | 'succeeded' }>>(tab.id, {
+        operation,
+        type: 'open_create_form',
+      });
+      if (opened.status !== 'succeeded') return opened;
+      await sleep(1800);
+    }
     return sendContent<Extract<ContentResponse, { status: 'paused' | 'succeeded' }>>(
       tab.id,
       {
@@ -395,7 +409,7 @@ const executeOneOperation = async (operation: Operation) => {
         operation,
         type: 'execute_operation',
       },
-      await getCreateFormFrameIds(tab.id),
+      createEmbedUrl ? [0] : await getCreateFormFrameIds(tab.id),
     );
   }
   const targetUrl = operation.target?.url || operation.activity?.target?.url || operation.association?.from?.url;
