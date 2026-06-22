@@ -147,7 +147,54 @@ const collectTables = (): TableSnapshot[] => {
     }
   }
 
-  return tables;
+  const gridContainers = [
+    ...document.querySelectorAll<HTMLElement>(
+      [
+        '[role="grid"]',
+        '[role="table"]',
+        '[data-test-id*="table"]',
+        '[data-testid*="table"]',
+        '[data-selenium-test*="table"]',
+      ].join(', '),
+    ),
+  ].filter((container) => isVisible(container) && !container.closest('table'));
+
+  for (const container of gridContainers.slice(0, 4)) {
+    const columns = [...container.querySelectorAll<HTMLElement>('[role="columnheader"], [data-test-id*="header"], [data-testid*="header"]')]
+      .map(visibleText)
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .slice(0, 20);
+
+    const rowElements = [...container.querySelectorAll<HTMLElement>('[role="row"], [data-test-id*="row"], [data-testid*="row"]')]
+      .filter((row) => isVisible(row) && !row.querySelector('[role="columnheader"]'))
+      .slice(0, 50);
+
+    const cellRows = rowElements
+      .map((row) => {
+        const cells = [...row.querySelectorAll<HTMLElement>('[role="gridcell"], [role="cell"], [data-test-id*="cell"], [data-testid*="cell"]')]
+          .map(visibleText)
+          .filter(Boolean);
+        return cells.length > 0 ? cells : [visibleText(row)].filter(Boolean);
+      })
+      .filter((row) => row.length > 0);
+
+    if (cellRows.length === 0) continue;
+
+    const resolvedColumns =
+      columns.length > 0
+        ? columns
+        : cellRows[0]?.map((_value, index) => `Column ${index + 1}`).slice(0, 20) || [];
+    if (resolvedColumns.length === 0) continue;
+
+    tables.push({
+      columns: resolvedColumns,
+      rows: cellRows.map((row) => Object.fromEntries(resolvedColumns.map((column, index) => [column, row[index] || '']))),
+      title: visibleText(container.closest('section, article, [data-test-id], [data-testid]')?.querySelector('h1, h2, h3')) || undefined,
+    });
+  }
+
+  return tables.slice(0, 6);
 };
 
 const collectAssociations = (): AssociationSnapshot[] => {

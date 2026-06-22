@@ -1,6 +1,6 @@
 {
   "name": "mcp-hubspot",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "Browser-mediated HubSpot MCP server and Chromium extension for using HubSpot without admin API access.",
